@@ -1,0 +1,55 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "capabilities": [
+    {
+      "identifier": "main",
+      "description": "Main window: ResSwap's own commands and core events, nothing else.",
+      "windows": ["main"],
+      "local": true,
+      "platforms": ["windows"],
+      "permissions": [
+        "core:event:allow-listen",
+        "core:event:allow-unlisten",
+        "allow-list-monitors",
+        "allow-get-state",
+        "allow-apply-mode",
+        "allow-confirm-mode",
+        "allow-revert-mode",
+        "allow-restore-native",
+        "allow-restore-everything",
+        "allow-list-profiles",
+        "allow-save-profile",
+        "allow-delete-profile",
+        "allow-set-auto-switch",
+        "allow-list-custom-entries",
+        "allow-add-custom-mode",
+        "allow-remove-custom-entry",
+        "allow-undo-all-changes",
+        "allow-get-settings",
+        "allow-save-settings",
+        "allow-set-hotkey",
+        "allow-set-autostart",
+        "allow-create-play-shortcut",
+        "allow-check-for-update",
+        "allow-install-update",
+        "allow-open-log-folder",
+        "allow-get-diagnostics",
+        "allow-dismiss-error"
+      ]
+    },
+    {
+      "identifier": "keep-mode",
+      "description": "Keep-this-mode prompt: read the state, keep or revert the pending change.",
+      "windows": ["keep-mode"],
+      "local": true,
+      "platforms": ["windows"],
+      "permissions": [
+        "core:event:allow-listen",
+        "core:event:allow-unlisten",
+        "allow-get-state",
+        "allow-confirm-mode",
+        "allow-revert-mode"
+      ]
+    }
+  ]
+}

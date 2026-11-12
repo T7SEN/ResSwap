@@ -1,0 +1,56 @@
+{
+  "productName": "ResSwap",
+  "mainBinaryName": "ResSwap",
+  "version": "0.1.0",
+  "identifier": "io.github.T7SEN.ResSwap",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "ResSwap",
+        "create": false,
+        "width": 900,
+        "height": 640,
+        "minWidth": 720,
+        "minHeight": 560
+      },
+      {
+        "label": "keep-mode",
+        "title": "ResSwap: keep this resolution?",
+        "create": false,
+        "width": 440,
+        "height": 240,
+        "resizable": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "capabilities": ["main", "keep-mode"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "T7SEN",
+    "copyright": "Copyright (c) 2026 T7SEN",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "windows": {
+      "allowDowngrades": false,
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English"]
+      }
+    }
+  }
+}
