@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "budgets": [
+    {
+      "id": "installer",
+      "req": "REQ-PERF-01",
+      "from": "P0",
+      "build": "release",
+      "metric": "installer.bytes",
+      "unit": "bytes",
+      "every": "gate",
+      "max": 10485760,
+      "by": "pnpm budgets"
+    },
+    {
+      "id": "first-paint-debug",
+      "req": "REQ-PERF-05",
+      "from": "P0",
+      "until": "P6",
+      "build": "debug",
+      "metric": "timings.firstPaintMs.max",
+      "unit": "ms",
+      "every": "gate",
+      "max": 1000,
+      "strict": true,
+      "by": "e2e:app"
+    },
+    {
+      "id": "idle-open",
+      "req": "REQ-PERF-02",
+      "from": "P0",
+      "until": "P0",
+      "build": "release",
+      "metric": "idle.privateBytes",
+      "unit": "bytes",
+      "where": { "idle.window": "open" },
+      "every": "record",
+      "max": null,
+      "by": "T7SEN"
+    },
+    {
+      "id": "mode-switch",
+      "req": "REQ-PERF-03",
+      "from": "P1",
+      "build": "release",
+      "metric": "timings.modeSwitchMs.max",
+      "unit": "ms",
+      "every": "hw-round",
+      "max": 2000,
+      "strict": true,
+      "by": "T7SEN"
+    },
+    {
+      "id": "watcher-snapshot",
+      "req": "REQ-PERF-06",
+      "from": "P4",
+      "until": "P4",
+      "build": "release",
+      "metric": "watcher.meanUs",
+      "unit": "us",
+      "where": { "idle.autoSwitch": "watching" },
+      "every": "record",
+      "max": null,
+      "by": "T7SEN"
+    },
+    {
+      "id": "auto-switch",
+      "req": "REQ-PERF-04",
+      "from": "P4",
+      "build": "release",
+      "metric": "timings.autoSwitchDetectMs.max",
+      "unit": "ms",
+      "every": "hw-round",
+      "max": 2000,
+      "by": "T7SEN"
+    },
+    {
+      "id": "idle-memory",
+      "req": "REQ-PERF-02",
+      "from": "P5",
+      "build": "release",
+      "metric": "idle.privateBytes",
+      "unit": "bytes",
+      "where": { "idle.window": "closed" },
+      "every": "gate",
+      "max": 31457280,
+      "by": "T7SEN"
+    },
+    {
+      "id": "idle-cpu",
+      "req": "REQ-PERF-02",
+      "from": "P5",
+      "build": "release",
+      "metric": "idle.cpuPercent",
+      "unit": "%",
+      "where": { "idle.window": "closed" },
+      "every": "gate",
+      "max": 0.1,
+      "strict": true,
+      "by": "T7SEN"
+    },
+    {
+      "id": "idle-webview",
+      "req": "REQ-SHELL-12",
+      "from": "P5",
+      "build": "release",
+      "metric": "idle.webviewProcesses",
+      "unit": "processes",
+      "where": { "idle.window": "closed" },
+      "every": "gate",
+      "max": 0,
+      "by": "T7SEN"
+    },
+    {
+      "id": "first-paint",
+      "req": "REQ-PERF-05",
+      "from": "P7",
+      "build": "release",
+      "metric": "timings.firstPaintMs.max",
+      "unit": "ms",
+      "every": "gate",
+      "max": 1000,
+      "strict": true,
+      "by": "T7SEN"
+    }
+  ]
+}
