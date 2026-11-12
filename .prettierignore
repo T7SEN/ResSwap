@@ -1,0 +1,10 @@
+dist
+dist-mock
+src-tauri/target
+src-tauri/gen
+src/core/types
+docs/results
+coverage
+playwright-report
+test-results
+pnpm-lock.yaml

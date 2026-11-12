@@ -1,0 +1,14 @@
+node_modules
+dist
+dist-mock
+coverage
+playwright-report
+test-results
+src-tauri/target
+src-tauri/gen
+logs
+*.log
+*.tsbuildinfo
+.env
+.env.*
+!.env.mock
