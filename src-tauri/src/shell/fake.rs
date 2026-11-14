@@ -1,6 +1,6 @@
-//! The fake Run value, the fake shortcut writer and the fake launcher: state in memory, a
-//! call log and scripted faults. They write no registry value, create no file and start no
-//! program (REQ-DISP-01).
+//! The fake Run value, the fake shortcut writer, the fake launcher, the fake folder opener and
+//! the fake keep-mode window: state in memory, a call log and scripted faults. They write no
+//! registry value, create no file, start no program and open no window (REQ-DISP-01).
 
 #![forbid(unsafe_code)]
 
@@ -11,7 +11,9 @@ use crate::apply::{OpenEntries, Ticket};
 use crate::display::fake::{CallLog, FaultScript, When, lock};
 use crate::error::{AppError, Failure};
 use crate::shell::autostart::RunKey;
+use crate::shell::log_folder::FolderOpener;
 use crate::shell::shortcuts::{Launcher, ShortcutSpec, ShortcutWriter};
+use crate::shell::window::KeepModeWindow;
 
 /// The Desktop folder the fake reports, in its environment-variable form. Synthetic.
 const FAKE_DESKTOP: &str = r"%USERPROFILE%\Desktop";
@@ -252,10 +254,143 @@ impl Launcher for FakeLauncher {
     }
 }
 
+/// A failure a test scripts into the fake folder opener.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FolderFault {
+    /// Explorer does not start: INTERNAL.
+    OpenFails,
+}
+
+/// A folder opener that records each folder it was asked to show and opens none.
+#[derive(Default)]
+pub struct FakeFolderOpener {
+    log: CallLog<PathBuf>,
+    script: FaultScript<FolderFault>,
+}
+
+impl FakeFolderOpener {
+    /// The fake, with nothing opened.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds a fault to the script.
+    pub fn script(&self, fault: FolderFault, when: When) {
+        self.script.push(fault, when);
+    }
+
+    /// Every folder the fake was asked to show, in order.
+    pub fn calls(&self) -> Vec<PathBuf> {
+        self.log.calls()
+    }
+}
+
+impl FolderOpener for FakeFolderOpener {
+    fn open(&self, folder: &Path) -> Result<(), AppError> {
+        self.log.record(folder.to_path_buf());
+        if let Some(FolderFault::OpenFails) = self.script.due(|_| true) {
+            return Err(AppError::internal(
+                "scripted fault: the fake folder opener could not start Explorer",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// A failure a test scripts into the fake keep-mode window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeepModeFault {
+    /// The window does not open (INJ-D15): the countdown must still revert.
+    OpenFails,
+}
+
+/// One call the fake keep-mode window received.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeepModeCall {
+    Open,
+    Close,
+}
+
+/// A keep-mode window that records each open and close and shows nothing.
+#[derive(Default)]
+pub struct FakeKeepModeWindow {
+    log: CallLog<KeepModeCall>,
+    script: FaultScript<KeepModeFault>,
+    open: Mutex<bool>,
+}
+
+impl FakeKeepModeWindow {
+    /// The fake, with no window open.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds a fault to the script.
+    pub fn script(&self, fault: KeepModeFault, when: When) {
+        self.script.push(fault, when);
+    }
+
+    /// Every call so far, in order.
+    pub fn calls(&self) -> Vec<KeepModeCall> {
+        self.log.calls()
+    }
+
+    /// Whether the fake window is open now.
+    pub fn is_open(&self) -> bool {
+        *lock(&self.open)
+    }
+}
+
+impl KeepModeWindow for FakeKeepModeWindow {
+    fn open(&self) -> Result<(), AppError> {
+        self.log.record(KeepModeCall::Open);
+        if let Some(KeepModeFault::OpenFails) = self.script.due(|_| true) {
+            return Err(AppError::internal(
+                "scripted fault: the fake keep-mode window did not open",
+            ));
+        }
+        *lock(&self.open) = true;
+        Ok(())
+    }
+
+    fn close(&self) {
+        self.log.record(KeepModeCall::Close);
+        *lock(&self.open) = false;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::{ErrorCode, ErrorContext};
+
+    #[test]
+    fn req_set_09_folder_opener_records_and_opens_nothing() {
+        let opener = FakeFolderOpener::new();
+        let folder = PathBuf::from(r"%LOCALAPPDATA%\io.github.T7SEN.ResSwap\logs");
+        opener.open(&folder).unwrap();
+        opener.script(FolderFault::OpenFails, When::Once);
+        assert_eq!(
+            opener.open(&folder).unwrap_err().code(),
+            ErrorCode::Internal
+        );
+        assert_eq!(opener.calls(), vec![folder.clone(), folder]);
+    }
+
+    #[test]
+    fn req_safe_05_inj_d15_keep_mode_window_can_fail_to_open() {
+        let window = FakeKeepModeWindow::new();
+        window.open().unwrap();
+        assert!(window.is_open());
+        window.close();
+        window.script(KeepModeFault::OpenFails, When::Once);
+        assert!(window.open().is_err());
+        assert!(!window.is_open());
+        assert_eq!(
+            window.calls(),
+            vec![KeepModeCall::Open, KeepModeCall::Close, KeepModeCall::Open]
+        );
+    }
 
     fn spec() -> ShortcutSpec {
         ShortcutSpec {

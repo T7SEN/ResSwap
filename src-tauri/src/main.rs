@@ -8,6 +8,9 @@ fn main() {
     resswap_lib::mark_process_start();
     // Before anything else can load a library.
     resswap_lib::system::restrict_dll_search();
+    // Before any thread or the web view exists: a release build drops the variable that
+    // could open a debugging port on its window (REQ-SEC-06).
+    resswap_lib::system::webview_env::clear_browser_arguments();
     let action = match resswap_lib::parse_args(std::env::args_os().skip(1)) {
         Ok(action) => action,
         // Refused before the builder: no window, no plugin, nothing forwarded (REQ-SHELL-11).

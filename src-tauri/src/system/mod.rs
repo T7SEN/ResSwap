@@ -3,8 +3,11 @@
 
 pub mod clock;
 pub mod fake;
+pub mod handles;
 pub mod notify;
 pub mod processes;
+pub mod registry;
+pub mod webview_env;
 
 use std::sync::OnceLock;
 

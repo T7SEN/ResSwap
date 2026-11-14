@@ -4,6 +4,7 @@
 pub mod autostart;
 pub mod fake;
 pub mod hotkeys;
+pub mod log_folder;
 pub mod shortcuts;
 pub mod theme;
 pub mod tray;
