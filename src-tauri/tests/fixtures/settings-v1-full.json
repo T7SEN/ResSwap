@@ -1,0 +1,70 @@
+{
+  "settings": {
+    "schemaVersion": 1,
+    "revertCountdownSecs": 10,
+    "checkForUpdates": false,
+    "showHiddenMonitors": true,
+    "selectedMonitor": {
+      "devicePath": "fake-device-path:test-pc:lg-ultragear",
+      "edidManufacturerId": 7789,
+      "edidProductCode": 23438,
+      "connectorInstance": 0
+    },
+    "playStretchedProfile": "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "startWithWindows": false,
+    "hotkeys": [
+      {
+        "action": "playStretched",
+        "accelerator": "Ctrl+Alt+F9"
+      }
+    ],
+    "confirmedModes": [
+      {
+        "monitor": {
+          "devicePath": "fake-device-path:test-pc:lg-ultragear",
+          "edidManufacturerId": 7789,
+          "edidProductCode": 23438,
+          "connectorInstance": 0
+        },
+        "mode": {
+          "width": 1280,
+          "height": 960,
+          "refresh": {
+            "numerator": 240,
+            "denominator": 1,
+            "label": "240 Hz"
+          },
+          "label": "1280 x 960 at 240 Hz"
+        }
+      }
+    ]
+  },
+  "profiles": [
+    {
+      "id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+      "name": "Example",
+      "exe": "game.exe",
+      "monitor": {
+        "devicePath": "fake-device-path:test-pc:lg-ultragear",
+        "edidManufacturerId": 7789,
+        "edidProductCode": 23438,
+        "connectorInstance": 0
+      },
+      "mode": {
+        "width": 1280,
+        "height": 960,
+        "refresh": {
+          "numerator": 240,
+          "denominator": 1,
+          "label": "240 Hz"
+        },
+        "label": "1280 x 960 at 240 Hz"
+      },
+      "scaling": "fullScreen",
+      "turnOff": [],
+      "autoSwitch": false,
+      "restoreDelaySecs": 10,
+      "launchPath": null
+    }
+  ]
+}
