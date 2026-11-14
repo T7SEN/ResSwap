@@ -72,7 +72,7 @@ pub struct NvModesValue {
 /// The shape check that runs before anything else reads NV_Modes: REG_MULTI_SZ with exactly
 /// one string, or REG_SZ, inside the allow-list. Anything else is NV_MODES_PARSE_FAILED and
 /// nothing is written (REQ-NV-14).
-pub(in crate::vendor) fn check_nv_modes(raw: &RawValue) -> Result<NvModesValue, AppError> {
+pub(crate) fn check_nv_modes(raw: &RawValue) -> Result<NvModesValue, AppError> {
     let kind = match raw.kind {
         RawKind::MultiSz => NvModesKind::MultiSz,
         RawKind::Sz => NvModesKind::Sz,
