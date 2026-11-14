@@ -3,6 +3,7 @@ import { ActionButton } from '@/components/ActionButton';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { confirmMode, revertMode } from '@/core/client';
 import type { MessageHints } from '@/core/errors';
+import { sameMonitor } from '@/core/monitorId';
 import type { IpcError } from '@/core/types/IpcError';
 import type { ModeReverted } from '@/core/types/ModeReverted';
 import type { PendingChange } from '@/core/types/PendingChange';
@@ -67,7 +68,7 @@ export function KeepMode() {
   const canAct = pending !== null && action === null && !keptTooLate;
 
   const monitor = state?.monitors.find(
-    (item) => shown !== null && item.id.devicePath === shown.monitor.devicePath,
+    (item) => shown !== null && sameMonitor(item.id, shown.monitor),
   );
   const hints: MessageHints = { monitorOnNvidia: monitor?.vendor === 'nvidia' };
 

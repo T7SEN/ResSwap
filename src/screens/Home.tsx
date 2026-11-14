@@ -4,6 +4,7 @@ import { Announcer } from '@/components/Announcer';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { applyMode, restoreEverything, restoreNative, saveSettings } from '@/core/client';
 import { errorMessage, type MessageHints } from '@/core/errors';
+import { hasIdentity, monitorKey, sameMonitor } from '@/core/monitorId';
 import type { ActiveChange } from '@/core/types/ActiveChange';
 import type { AppState } from '@/core/types/AppState';
 import type { BusyAction } from '@/core/types/BusyAction';
@@ -26,6 +27,7 @@ import {
   ERROR_SOURCE_LABELS,
   FAKE_BACKEND_NOTICE,
   keptLine,
+  NO_IDENTITY_REASON,
   NO_OPEN_CHANGES,
   NOTHING_TO_RESTORE,
   pendingLine,
@@ -59,10 +61,6 @@ type Line = { text: string; tone: Tone };
 
 // A u32 on the Rust side, so a larger number could never reach the core.
 const MAX_SIZE = 4_294_967_295;
-
-function sameMonitor(a: MonitorId, b: MonitorId): boolean {
-  return a.devicePath === b.devicePath;
-}
 
 function visibleMonitors(state: AppState): Monitor[] {
   return state.monitors.filter((monitor) => !monitor.hidden || state.settings.showHiddenMonitors);
@@ -157,14 +155,20 @@ type OutcomeViewProps = {
   result: OutcomeResult;
   line: Line | null;
   hints: MessageHints;
+  reverted: ModeReverted | null;
 };
 
-/** The status line under an action, then one warning alert per warning, or the error. */
-function OutcomeView({ result, line, hints }: OutcomeViewProps) {
+/**
+ * The status line under an action, then one warning alert per warning, or the error. A pending
+ * change that went back takes its warnings with it: they were about a mode no longer on screen.
+ */
+function OutcomeView({ result, line, hints, reverted }: OutcomeViewProps) {
   if (result.kind === 'failed') {
     return <ErrorAlert error={result.error} hints={hints} />;
   }
-  const warnings = result.kind === 'applied' || result.kind === 'pending' ? result.warnings : [];
+  const wentBack = result.kind === 'pending' && reverted?.changeId === result.pending.changeId;
+  const warnings =
+    !wentBack && (result.kind === 'applied' || result.kind === 'pending') ? result.warnings : [];
   return (
     <div className="flex flex-col gap-2">
       {line === null ? null : <p className="break-words tabular-nums">{line.text}</p>}
@@ -226,6 +230,7 @@ export function Home({ state }: HomeProps) {
   const busyReasonId = `${ids}-busy`;
   const monitorLineId = `${ids}-monitor-line`;
   const sizeErrorId = `${ids}-size-error`;
+  const noIdentityId = `${ids}-no-identity`;
   const restoreNativeReasonId = `${ids}-restore-native-reason`;
   const restoreEverythingReasonId = `${ids}-restore-everything-reason`;
   const hiddenHelpId = `${ids}-hidden-help`;
@@ -315,7 +320,7 @@ export function Home({ state }: HomeProps) {
   }
 
   function applySize(): void {
-    if (monitor === undefined || sizeRefresh === undefined || isBusy) {
+    if (monitor === undefined || sizeRefresh === undefined || isBusy || !hasIdentity(monitor.id)) {
       return;
     }
     const parsedWidth = Number(width);
@@ -376,7 +381,7 @@ export function Home({ state }: HomeProps) {
 
   function outcomeAt(place: Place) {
     return outcome?.place === place ? (
-      <OutcomeView result={outcome.result} line={line} hints={hints} />
+      <OutcomeView result={outcome.result} line={line} hints={hints} reverted={reverted} />
     ) : null;
   }
 
@@ -416,20 +421,20 @@ export function Home({ state }: HomeProps) {
                 </label>
                 <select
                   id={`${ids}-monitor`}
-                  value={monitor.id.devicePath}
+                  value={String(visible.indexOf(monitor))}
                   disabled={isSaving}
                   onChange={(event) => {
-                    const picked = visible.find(
-                      (item) => item.id.devicePath === event.target.value,
-                    );
+                    // Entries are keyed by their place in the list: a monitor whose device is
+                    // disabled in Device Manager has no device path (REQ-DISP-26).
+                    const picked = visible[Number(event.target.value)];
                     if (picked !== undefined) {
                       void save({ ...settingsInput(state.settings), selectedMonitor: picked.id });
                     }
                   }}
                   className="min-h-9 w-fit rounded-md border border-input bg-background px-3 text-foreground"
                 >
-                  {visible.map((item) => (
-                    <option key={item.id.devicePath} value={item.id.devicePath}>
+                  {visible.map((item, index) => (
+                    <option key={monitorKey(item.id)} value={String(index)}>
                       {monitorName(item)}
                       {item.primary ? ', Primary' : ''}
                       {item.hidden ? ', Virtual display' : ''}
@@ -465,6 +470,11 @@ export function Home({ state }: HomeProps) {
           </Section>
 
           <Section title="Presets">
+            {hasIdentity(monitor.id) ? null : (
+              <p id={noIdentityId} className="text-muted-foreground">
+                {NO_IDENTITY_REASON}
+              </p>
+            )}
             <ul className="flex flex-wrap gap-3">
               {monitor.presets.map((preset) => {
                 const key = `preset-${preset.aspect}`;
@@ -549,12 +559,19 @@ export function Home({ state }: HomeProps) {
                 <ActionButton
                   type="submit"
                   onPress={applySize}
-                  isBlocked={isBusy || sizeRefresh === undefined}
-                  reasonId={sizeRefresh === undefined ? monitorLineId : busyReasonId}
+                  isBlocked={isBusy || sizeRefresh === undefined || !hasIdentity(monitor.id)}
+                  reasonId={
+                    !hasIdentity(monitor.id)
+                      ? noIdentityId
+                      : sizeRefresh === undefined
+                        ? monitorLineId
+                        : busyReasonId
+                  }
                 >
                   {buttonText('custom', 'Apply size')}
                 </ActionButton>
               </div>
+
               {sizeErrors.width || sizeErrors.height ? (
                 <p id={sizeErrorId} className="text-destructive">
                   Enter a whole number above 0.
