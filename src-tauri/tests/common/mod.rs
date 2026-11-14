@@ -5,8 +5,12 @@
 #![allow(dead_code, reason = "each test file uses its own part of the helpers")]
 
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use resswap_lib::display::fake::FixtureProfile;
+use resswap_lib::ipc::events::{CoreEvent, EventSink};
+use resswap_lib::shell::fake::FakeKeepModeWindow;
 use resswap_lib::{Core, DataFolders, Fakes, StartAction, create_app, start_up};
 use serde_json::Value;
 use tauri::ipc::{CallbackFn, InvokeBody};
@@ -18,6 +22,80 @@ use tauri::{App, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 pub fn fake_core(profile: FixtureProfile) -> (Core, Fakes) {
     let fakes = Fakes::new(profile);
     (Core::new(fakes.backends()), fakes)
+}
+
+/// A `Core` on the fakes of `profile` that records every event it sends and opens the fake
+/// keep-mode window, with the fakes, the recorder and the window kept for the test.
+pub fn watched_core(
+    profile: FixtureProfile,
+) -> (Core, Fakes, Arc<Recorder>, Arc<FakeKeepModeWindow>) {
+    watched_core_on(Fakes::new(profile))
+}
+
+/// `watched_core` over fakes a test prepared first.
+pub fn watched_core_on(fakes: Fakes) -> (Core, Fakes, Arc<Recorder>, Arc<FakeKeepModeWindow>) {
+    let core = Core::new(fakes.backends());
+    let recorder = Arc::new(Recorder::default());
+    let window = Arc::new(FakeKeepModeWindow::new());
+    core.set_event_sink(recorder.clone());
+    core.set_keep_mode_window(window.clone());
+    (core, fakes, recorder, window)
+}
+
+/// Records every event the core sends, as a window that listens would receive them.
+#[derive(Default)]
+pub struct Recorder {
+    events: Mutex<Vec<(CoreEvent, Value)>>,
+}
+
+impl Recorder {
+    /// Every event name so far, in order.
+    pub fn names(&self) -> Vec<&'static str> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(event, _)| event.name())
+            .collect()
+    }
+
+    /// The payloads of every `event` so far, in order.
+    pub fn payloads(&self, event: CoreEvent) -> Vec<Value> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(sent, _)| *sent == event)
+            .map(|(_, payload)| payload.clone())
+            .collect()
+    }
+
+    /// Forgets the events so far.
+    pub fn clear(&self) {
+        self.events.lock().unwrap().clear();
+    }
+}
+
+impl EventSink for Recorder {
+    fn has_listeners(&self) -> bool {
+        true
+    }
+
+    fn send(&self, event: CoreEvent, payload: Value) {
+        self.events.lock().unwrap().push((event, payload));
+    }
+}
+
+/// Waits up to five seconds for `ready`, for work the core queues on a task or a thread.
+pub fn wait_for(ready: impl Fn() -> bool) -> bool {
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(5) {
+        if ready() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    ready()
 }
 
 /// A folder for one test inside Cargo's target folder, so no test writes outside the
