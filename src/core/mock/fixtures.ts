@@ -86,6 +86,25 @@ export const VIRTUAL_ID: MonitorId = {
   connectorInstance: 0,
 };
 
+/**
+ * The primary monitor with its device disabled in Device Manager: no device path, so the
+ * EDID ids and connector instance name it (REQ-DISP-26). The test PC's own EDID ids.
+ */
+export const NO_PATH_PRIMARY_ID: MonitorId = {
+  devicePath: '',
+  edidManufacturerId: 0x6d1e,
+  edidProductCode: 0x5b8e,
+  connectorInstance: 1,
+};
+
+/** A second real monitor with its device disabled too (REQ-DISP-26). */
+export const NO_PATH_SECOND_ID: MonitorId = {
+  devicePath: '',
+  edidManufacturerId: 0x2d4c,
+  edidProductCode: 0x707d,
+  connectorInstance: 0,
+};
+
 /** The NVIDIA adapter of the test PC. */
 export const NVIDIA_ADAPTER = 'NVIDIA GeForce RTX 4060 Ti';
 
@@ -134,6 +153,27 @@ export function monitorOn(monitor: Monitor, current: Mode, scaling: Scaling): Mo
     current,
     scaling,
     presets: presets(native, current.refresh.numerator, monitor.modes),
+  };
+}
+
+/** A second real monitor at 1920 x 1080 and 60 Hz, beside the primary one. */
+export function secondMonitor(id: MonitorId): Monitor {
+  const native = mode(1920, 1080, 60);
+  const modes = [native, mode(1280, 1024, 60), mode(1024, 768, 60)];
+  return {
+    id,
+    name: 'Second monitor',
+    adapter: NVIDIA_ADAPTER,
+    vendor: 'nvidia',
+    primary: false,
+    active: true,
+    hidden: false,
+    hiddenReason: null,
+    native,
+    current: native,
+    scaling: 'identity',
+    modes,
+    presets: presets(native, 60, modes),
   };
 }
 

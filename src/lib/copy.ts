@@ -155,6 +155,10 @@ export function restoredLine(monitorName: string | null, modeLabel: string): str
 }
 
 export const NOTHING_TO_RESTORE = 'Nothing to restore.';
+
+/** In Presets for a monitor no request can name (REQ-DISP-26). */
+export const NO_IDENTITY_REASON =
+  'ResSwap cannot change this monitor, because Windows does not say which monitor it is.';
 export const RESTORED_EVERYTHING = 'ResSwap put back everything it changed.';
 export const NO_OPEN_CHANGES = 'Nothing to restore. ResSwap has no open changes.';
 export const SAVED = 'Saved.';

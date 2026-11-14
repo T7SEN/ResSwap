@@ -117,7 +117,7 @@ describe('useCore', () => {
     });
     expect(result.current).toMatchObject({
       status: 'failed',
-      error: { code: 'INTERNAL', detail: 'Error: no core' },
+      error: { code: 'INTERNAL', detail: 'In the window: Error: no core' },
     });
   });
 });

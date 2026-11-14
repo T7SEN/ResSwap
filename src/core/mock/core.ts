@@ -1,5 +1,6 @@
 import { emit } from '@tauri-apps/api/event';
-import { emptyContext, internalError } from '../errors';
+import { emptyContext, internalError, windowError } from '../errors';
+import { sameMonitor } from '../monitorId';
 import type { ActiveChange } from '../types/ActiveChange';
 import type { AppState } from '../types/AppState';
 import type { CommandName } from '../types/CommandName';
@@ -157,10 +158,6 @@ function labelled(requested: Mode): Mode {
   };
 }
 
-function sameMonitor(a: MonitorId, b: MonitorId): boolean {
-  return a.devicePath === b.devicePath;
-}
-
 function isNativeSize(monitor: Monitor, target: Mode): boolean {
   return (
     monitor.native !== null &&
@@ -171,7 +168,7 @@ function isNativeSize(monitor: Monitor, target: Mode): boolean {
 
 /** Tauri refuses a request it cannot read before the command runs; the facade sees INTERNAL. */
 function invalidRequest(cmd: CommandName): Answer {
-  return failed(internalError(`invalid args \`request\` for command \`${cmd}\``));
+  return failed(windowError(`invalid args \`request\` for command \`${cmd}\``));
 }
 
 /** Values that make each message read as it would on the test PC. */
@@ -548,6 +545,8 @@ export class MockCore {
         monitors,
         active: [],
         recovery: { status: 'clean', stillChanged: [] },
+        // The raised RECOVERY_INCOMPLETE leaves with the state it described (D-034).
+        errors: this.current.errors.filter((raised) => raised.error.code !== 'RECOVERY_INCOMPLETE'),
       });
     }
     return ok({
@@ -592,7 +591,7 @@ export class MockCore {
   private answer(cmd: string, payload: unknown): Answer {
     // A call that is not a ResSwap command also catches a component that reached past the facade.
     if (!isCommandName(cmd)) {
-      return failed(internalError(`not a ResSwap command: ${cmd}`));
+      return failed(windowError(`not a ResSwap command: ${cmd}`));
     }
     if (cmd === 'get_state') {
       this.raiseAfterFirstRead();

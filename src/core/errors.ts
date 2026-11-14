@@ -15,7 +15,16 @@ type MessageInput = {
   /** True when the error carries a step list, which the window shows under the message. */
   hasSteps: boolean;
   hints: MessageHints;
+  /** True for an INTERNAL the window built itself, which no log line records. */
+  fromWindow: boolean;
 };
+
+/**
+ * Starts the detail of an INTERNAL the window builds itself: a request Tauri refused before
+ * any command ran, or an answer the window could not read. The window cannot write to the log
+ * (D-003), so the message for these points at the details instead (REQ-UI-09).
+ */
+export const WINDOW_DETAIL_PREFIX = 'In the window: ';
 
 type Message = (input: MessageInput) => string;
 
@@ -201,7 +210,10 @@ export const ERROR_MESSAGES = {
     'ResSwap could not get update information from GitHub. Nothing was downloaded or installed. Try again later.',
   UPDATE_SIGNATURE_INVALID: () =>
     'The downloaded update failed the signature check, so ResSwap did not install it. Your current version is unchanged.',
-  INTERNAL: () => 'Something went wrong inside ResSwap. The log has the details.',
+  INTERNAL: ({ fromWindow }) =>
+    fromWindow
+      ? 'Something went wrong inside ResSwap. The details below show what failed.'
+      : 'Something went wrong inside ResSwap. The log has the details.',
 } satisfies Record<ErrorCode, Message>;
 
 /** True for the 29 code strings the core sends, and for nothing else. */
@@ -211,7 +223,12 @@ export function isErrorCode(value: unknown): value is ErrorCode {
 
 /** The message the window shows for an error. Placeholders fall back as the contract says. */
 export function errorMessage(error: IpcError, hints: MessageHints = NO_HINTS): string {
-  return ERROR_MESSAGES[error.code]({ c: error.context, hasSteps: error.steps.length > 0, hints });
+  return ERROR_MESSAGES[error.code]({
+    c: error.context,
+    hasSteps: error.steps.length > 0,
+    hints,
+    fromWindow: error.code === 'INTERNAL' && error.detail.startsWith(WINDOW_DETAIL_PREFIX),
+  });
 }
 
 /** A context with every value absent, for errors that need none. */
@@ -243,6 +260,11 @@ export function internalError(detail: string): IpcError {
   return { code: 'INTERNAL', context: emptyContext(), steps: [], detail };
 }
 
+/** INTERNAL built in the window from text that never reached the core's log. */
+export function windowError(raw: string): IpcError {
+  return internalError(`${WINDOW_DETAIL_PREFIX}${raw}`);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -267,7 +289,8 @@ function rawText(raw: unknown): string {
 /**
  * Turns whatever a command call rejected with into an IpcError. An object with a known code is the
  * core's own error; anything else, such as the string Tauri sends for a missing permission or a
- * request it could not read, becomes INTERNAL with the raw text in the detail.
+ * request it could not read, becomes INTERNAL with the raw text in the detail, marked as built in
+ * the window, because no log line records it.
  */
 export function toIpcError(raw: unknown): IpcError {
   if (isRecord(raw) && isErrorCode(raw.code) && isRecord(raw.context)) {
@@ -279,5 +302,5 @@ export function toIpcError(raw: unknown): IpcError {
       detail: typeof raw.detail === 'string' ? raw.detail : '',
     };
   }
-  return internalError(rawText(raw));
+  return windowError(rawText(raw));
 }

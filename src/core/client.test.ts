@@ -115,7 +115,9 @@ describe('the typed facade', () => {
       throw new Error('the window has no permission for this command');
     });
     const error = expectInternal(await client.getState());
-    expect(error.detail).toBe('Error: the window has no permission for this command');
+    expect(error.detail).toBe(
+      'In the window: Error: the window has no permission for this command',
+    );
   });
 
   test("REQ-UI-09 Tauri's own string rejection becomes INTERNAL with the text in the detail", async () => {
@@ -123,14 +125,14 @@ describe('the typed facade', () => {
     // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- Tauri rejects with a plain string when it cannot read a request; the test sends the same.
     mockIPC(() => Promise.reject(text));
     const error = expectInternal(await client.applyMode({ kind: 'profile', profileId: 'x' }));
-    expect(error.detail).toBe(text);
+    expect(error.detail).toBe(`In the window: ${text}`);
   });
 
   test('REQ-UI-20 a command still settles when no IPC exists at all', async () => {
     clearMocks();
     Reflect.deleteProperty(window, '__TAURI_INTERNALS__');
     const error = expectInternal(await client.listMonitors());
-    expect(error.detail).toMatch(/^TypeError: /);
+    expect(error.detail).toMatch(/^In the window: TypeError: /);
   });
 
   test('REQ-UI-01 the window label comes from the metadata, and only keep-mode is special', () => {

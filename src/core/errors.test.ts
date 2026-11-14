@@ -134,19 +134,33 @@ describe('toIpcError', () => {
   test('REQ-UI-09 anything that is not an IpcError becomes INTERNAL with the raw text', () => {
     const fromString = toIpcError('invalid args `request` for command `apply_mode`');
     expect(fromString.code).toBe('INTERNAL');
-    expect(fromString.detail).toBe('invalid args `request` for command `apply_mode`');
+    expect(fromString.detail).toBe(
+      'In the window: invalid args `request` for command `apply_mode`',
+    );
     expect(fromString.context).toEqual(emptyContext());
     expect(fromString.steps).toEqual([]);
 
     expect(toIpcError(new TypeError('no IPC'))).toMatchObject({
       code: 'INTERNAL',
-      detail: 'TypeError: no IPC',
+      detail: 'In the window: TypeError: no IPC',
     });
     expect(toIpcError({ code: 'NOT_A_CODE', context: {} })).toMatchObject({
       code: 'INTERNAL',
-      detail: '{"code":"NOT_A_CODE","context":{}}',
+      detail: 'In the window: {"code":"NOT_A_CODE","context":{}}',
     });
-    expect(toIpcError(undefined)).toMatchObject({ code: 'INTERNAL', detail: 'undefined' });
+    expect(toIpcError(undefined)).toMatchObject({
+      code: 'INTERNAL',
+      detail: 'In the window: undefined',
+    });
+  });
+
+  test('REQ-UI-09 only an INTERNAL from the core says the log has the details', () => {
+    expect(errorMessage(errorOf('INTERNAL'))).toBe(
+      'Something went wrong inside ResSwap. The log has the details.',
+    );
+    expect(errorMessage(toIpcError('invalid args `request` for command `apply_mode`'))).toBe(
+      'Something went wrong inside ResSwap. The details below show what failed.',
+    );
   });
 
   test('REQ-UI-08 a known code with missing fields still gives a whole error', () => {

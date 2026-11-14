@@ -194,7 +194,7 @@ describe('the mocked core', () => {
     const core = new MockCore(scenario, faults);
     await expect(core.dispatch('plugin:window|title', {})).rejects.toMatchObject({
       code: 'INTERNAL',
-      detail: 'not a ResSwap command: plugin:window|title',
+      detail: 'In the window: not a ResSwap command: plugin:window|title',
     });
     core.dispose();
   });
@@ -203,7 +203,7 @@ describe('the mocked core', () => {
     install('scenario=home-nativ&warn=restore_native:SCALING_NOT_APPLIED');
     const banner = document.querySelector('[role="alert"]');
     expect(banner?.textContent).toContain(
-      'Unknown scenario "home-nativ". Valid scenarios: fake-backend, first-run, hidden-monitors, home-native, home-stretched, pending-confirm, presets-offered, recovery-incomplete.',
+      'Unknown scenario "home-nativ". Valid scenarios: fake-backend, first-run, hidden-monitors, home-native, home-stretched, monitor-without-identity, monitors-without-path, pending-confirm, presets-offered, recovery-incomplete.',
     );
     expect(banner?.textContent).toContain(
       'Cannot use warn=restore_native:SCALING_NOT_APPLIED. The form is warn=<command>:<CODE>, and only apply_mode and confirm_mode return warnings.',

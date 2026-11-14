@@ -6,9 +6,12 @@ import {
   baseState,
   FIXTURE_TIME_MS,
   mode,
+  NO_PATH_PRIMARY_ID,
+  NO_PATH_SECOND_ID,
   pendingStretchedChange,
   PRIMARY_ID,
   primaryMonitor,
+  secondMonitor,
   stillChangedItems,
   stretchedChange,
   twoProfiles,
@@ -89,6 +92,40 @@ const SCENARIOS: Readonly<Record<string, () => AppState>> = {
         ...state.monitors.slice(1),
       ],
       settings: { ...state.settings, confirmedModes: [{ monitor: PRIMARY_ID, mode: kept }] },
+    };
+  },
+  // Two real monitors whose devices are disabled in Device Manager: neither reports a device
+  // path, so only the EDID ids and connector instances tell them apart (REQ-DISP-26).
+  'monitors-without-path': () => {
+    const state = baseState();
+    return {
+      ...state,
+      monitors: [
+        { ...primaryMonitor(), id: NO_PATH_PRIMARY_ID },
+        secondMonitor(NO_PATH_SECOND_ID),
+        ...state.monitors.slice(1),
+      ],
+    };
+  },
+  // A monitor Windows reports with neither a device path nor EDID ids: no request can name it,
+  // so it gets no presets and Apply size is blocked (REQ-DISP-26).
+  'monitor-without-identity': () => {
+    const state = baseState();
+    return {
+      ...state,
+      monitors: [
+        {
+          ...primaryMonitor(),
+          id: {
+            devicePath: '',
+            edidManufacturerId: null,
+            edidProductCode: null,
+            connectorInstance: 0,
+          },
+          presets: [],
+        },
+        ...state.monitors.slice(1),
+      ],
     };
   },
   'hidden-monitors': () => {
