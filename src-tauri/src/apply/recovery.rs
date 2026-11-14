@@ -11,13 +11,13 @@ use std::sync::atomic::Ordering;
 use crate::display::monitors::{find_monitor, same_monitor, to_monitor};
 use crate::display::types::{MonitorId, Scaling};
 use crate::display::{DisplayConfig, RawMonitor, TargetConfig};
-use crate::error::{AppError, JournalItemKind, StepKind};
+use crate::error::{AppError, ErrorCode, JournalItemKind, StepKind};
 use crate::ipc::types::{
     BackendKind, BusyAction, ChangeSource, ErrorSource, RecoveryState, RecoveryStatus,
     RestoreOutcome, RevertReason,
 };
 use crate::system::notify::SystemEvent;
-use crate::{Core, guard};
+use crate::{Core, CoreState, guard};
 
 use super::journal::{ChangeRecord, ChangeStatus, DisplayState, MonitorRecord};
 use super::{Steps, keep_active, monitor_gone, new_change_id, shows_state};
@@ -38,6 +38,18 @@ fn scaling_choice(state: &DisplayState) -> crate::display::types::ScalingChoice 
     } else {
         crate::display::types::ScalingChoice::Keep
     }
+}
+
+/// Recovery is clean again: nothing journaled is left changed, and no moved-aside journal is
+/// waiting for its fallback. The RECOVERY_INCOMPLETE errors raised for any change describe a
+/// state that no longer exists, so they leave the list too, and the window and the tray stop
+/// pointing at it (D-034).
+pub(crate) fn settle_recovery(state: &mut CoreState) {
+    state.recovery.status = RecoveryStatus::Clean;
+    state.recovery.still_changed.clear();
+    state
+        .errors
+        .retain(|raised| raised.error.code != ErrorCode::RecoveryIncomplete);
 }
 
 impl Core {
@@ -150,6 +162,7 @@ impl Core {
                         monitor: record.identity.clone(),
                         mode: record.baseline.raw_mode(),
                         scaling: scaling_choice(&record.baseline),
+                        exact_scaling: Some(record.baseline.scaling),
                     }],
                 };
                 if let Err(error) = self
@@ -345,13 +358,11 @@ impl Core {
                 }
                 let restored = after.iter().map(|monitor| monitor.id.clone()).collect();
                 let monitors = after.iter().map(to_monitor).collect();
+                self.inner.journal_lost.store(false, Ordering::Relaxed);
                 self.update(|state| {
                     state.monitors = monitors;
                     state.busy = None;
-                    state.recovery = RecoveryState {
-                        status: RecoveryStatus::Clean,
-                        still_changed: Vec::new(),
-                    };
+                    settle_recovery(state);
                 });
                 Ok(RestoreOutcome {
                     restored,
@@ -375,8 +386,9 @@ impl Core {
     /// Start-up recovery, before anything that can change the PC or react to a game. A
     /// release build and a debug run on the fake backend put back every unfinished change at
     /// once (REQ-SAFE-06; until the process-list wait of D-018 arrives with P4). A debug build
-    /// on the Win32 backend only reports what is open and offers Restore everything, changing
-    /// nothing (REQ-SAFE-07).
+    /// on the Win32 backend changes nothing on the display (REQ-SAFE-07): it closes the
+    /// entries Windows already put back and reports only what still differs, offering
+    /// Restore everything (D-033).
     pub async fn recover_at_start(&self) {
         let _lock = self.lock_changes_for(None).await;
         let journal_lost = self.inner.journal_lost.load(Ordering::Relaxed);
@@ -390,18 +402,6 @@ impl Core {
             return;
         }
         let report_only = self.inner.build.debug && self.inner.build.backend == BackendKind::Real;
-        if report_only {
-            let error = self.recovery_incomplete(
-                "a debug build on the Win32 backend changes nothing at start; Restore \
-                 everything puts these back",
-            );
-            self.set_recovery(
-                RecoveryStatus::Incomplete,
-                error.to_ipc().context.still_changed,
-            );
-            self.raise(ErrorSource::Startup, &error);
-            return;
-        }
         let live = match self.inner.display.enumerate() {
             Ok(live) => live,
             Err(error) => {
@@ -418,6 +418,7 @@ impl Core {
         let mut close: Vec<String> = Vec::new();
         let mut restore: Vec<MonitorId> = Vec::new();
         let mut gone: Vec<MonitorId> = Vec::new();
+        let mut changed_outside = false;
         for record in &file.monitors {
             let changes: Vec<&ChangeRecord> = file.changes_on(&record.identity).collect();
             let ids = changes.iter().map(|change| change.change_id.clone());
@@ -442,6 +443,7 @@ impl Core {
             } else {
                 // Changed outside ResSwap: never fight it.
                 log::info!("recovery: a journaled monitor was changed outside ResSwap");
+                changed_outside = true;
                 close.extend(ids);
             }
         }
@@ -454,6 +456,42 @@ impl Core {
         let refs: Vec<&str> = close.iter().map(String::as_str).collect();
         if let Err(error) = self.inner.journal.close(&refs) {
             log::warn!("recovery: entries were not closed: {error}");
+        }
+        // The saved snapshot still holds the mode that monitor had before ResSwap's change, so
+        // a later Restore everything would put it back over the outside change. Without the
+        // snapshot every monitor still listed goes back on its own route (D-036).
+        if changed_outside
+            && self.inner.journal.needs_recovery()
+            && let Err(error) = self.inner.journal.clear_layout()
+        {
+            log::warn!("recovery: the saved snapshot was not dropped: {error}");
+        }
+        if report_only {
+            // A debug build on the Win32 backend changes nothing on the display at start
+            // (REQ-SAFE-07). Entries Windows already put back, or that were changed outside
+            // ResSwap, closed above, a journal write only; what still differs is reported
+            // for Restore everything (D-033). A monitor that is not connected is not marked
+            // missing, so its return does not put anything back by itself.
+            if restore.is_empty() && gone.is_empty() && !self.inner.journal.needs_recovery() {
+                let status = if journal_lost {
+                    RecoveryStatus::Incomplete
+                } else {
+                    RecoveryStatus::Clean
+                };
+                self.set_recovery(status, Vec::new());
+                log::info!("recovery: every open change was already back; nothing to report");
+                return;
+            }
+            let error = self.recovery_incomplete(
+                "a debug build on the Win32 backend puts nothing back at start; Restore \
+                 everything puts these back",
+            );
+            self.set_recovery(
+                RecoveryStatus::Incomplete,
+                error.to_ipc().context.still_changed,
+            );
+            self.raise(ErrorSource::Startup, &error);
+            return;
         }
         let mut restored_any = false;
         let mut left = gone.clone();

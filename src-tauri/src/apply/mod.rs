@@ -18,10 +18,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use journal::OpenEntries;
 
+use crate::apply::recovery::settle_recovery;
 use crate::display::modes::{
     is_confirmed, read_back_verifies, resolve_target, restore_native_target, same_mode, to_mode,
 };
-use crate::display::monitors::{find_monitor, same_monitor, to_monitor};
+use crate::display::monitors::{find_monitor, has_edid_ids, same_monitor, to_monitor};
 use crate::display::types::{Mode, MonitorId, Scaling, ScalingChoice};
 use crate::display::{DisplayConfig, Rational, RawMode, RawMonitor, TargetConfig};
 use crate::error::{
@@ -64,16 +65,23 @@ const MAX_DEVICE_PATH_UNITS: usize = 128;
 /// letters, digits and hyphens.
 const MAX_CHANGE_ID_LEN: usize = 64;
 
-/// Checks a MonitorId from the window (REQ-SEC-08): a device path that is not empty, no
-/// longer than Windows can report and free of control characters. Anything else is a request
-/// the window never sends: INTERNAL.
+/// Checks a MonitorId from the window (REQ-SEC-08): a device path no longer than Windows can
+/// report and free of control characters, and an identity the matching rule can use.
+/// Windows reports an empty device path for a monitor whose device is disabled in Device
+/// Manager (REQ-DISP-26); that monitor is then named by its EDID ids and connector instance
+/// (REQ-DISP-20), so an empty path needs both EDID ids. Anything else is a request the window
+/// never sends: INTERNAL.
 pub(crate) fn check_monitor_id(id: &MonitorId) -> Result<(), AppError> {
     let units = id.device_path.encode_utf16().count();
-    if units == 0 || units >= MAX_DEVICE_PATH_UNITS || id.device_path.chars().any(char::is_control)
-    {
+    if units >= MAX_DEVICE_PATH_UNITS || id.device_path.chars().any(char::is_control) {
         return Err(AppError::internal(
-            "refused a request: the monitor's device path is empty, too long or holds a \
-             control character",
+            "refused a request: the monitor's device path is too long or holds a control \
+             character",
+        ));
+    }
+    if units == 0 && !has_edid_ids(id) {
+        return Err(AppError::internal(
+            "refused a request: the monitor has neither a device path nor both EDID ids",
         ));
     }
     Ok(())
@@ -292,6 +300,8 @@ enum Rejection {
     ReadBack(AppError),
     /// The read after the apply call shows another mode, or no mode on that monitor.
     Differs,
+    /// The read after the apply call worked but no longer lists the monitor.
+    Gone,
 }
 
 impl Core {
@@ -526,6 +536,7 @@ impl Core {
                 monitor: monitor.id.clone(),
                 mode: listed,
                 scaling: target.scaling,
+                exact_scaling: None,
             }],
         };
         let requested = to_mode(listed);
@@ -624,14 +635,19 @@ impl Core {
         self.set_busy(busy, StepKind::Verify);
         let read = self.inner.display.enumerate();
         let checked = match (applied, read) {
-            (Ok(()), Ok(after)) => find_monitor(&monitor.id, &after)
-                .filter(|live| {
-                    live.current
-                        .is_some_and(|now| read_back_verifies(listed, now, &ccd_rates))
-                })
-                .cloned()
-                .map(|live| (live, after))
-                .ok_or(Rejection::Differs),
+            (Ok(()), Ok(after)) => match find_monitor(&monitor.id, &after).cloned() {
+                // Unplugged or switched off between the apply call and the read: the monitor
+                // is gone, not the mode rejected (REQ-SAFE-09).
+                None => Err(Rejection::Gone),
+                Some(live)
+                    if live
+                        .current
+                        .is_some_and(|now| read_back_verifies(listed, now, &ccd_rates)) =>
+                {
+                    Ok((live, after))
+                }
+                Some(_) => Err(Rejection::Differs),
+            },
             (Ok(()), Err(error)) => {
                 // A failed read says nothing about the mode, so it is never reported as a
                 // rejected mode (REQ-UI-09).
@@ -779,8 +795,8 @@ impl Core {
     /// (REQ-DISP-13), or INTERNAL with the read error when the read failed, because no other
     /// code describes a failed read (REQ-UI-09). When putting it back fails too, or leaves the
     /// scaling changed, the entry stays open and the error is RECOVERY_INCOMPLETE. When the
-    /// apply call found the monitor gone, nothing changed; its entry stays for when it
-    /// returns.
+    /// apply call found the monitor gone, or the read after it no longer lists the monitor,
+    /// the error is MONITOR_GONE and its entry stays for when it returns (REQ-SAFE-09).
     #[allow(
         clippy::too_many_arguments,
         reason = "the parts of one failed change that its error names"
@@ -800,6 +816,18 @@ impl Core {
                 self.mark_missing(&monitor.id);
                 let detail = error.to_string();
                 return monitor_gone(name, &detail).with_steps(steps.list());
+            }
+            // Its entry stays, as above, so the change goes back once the monitor returns.
+            Rejection::Gone => {
+                self.mark_missing(&monitor.id);
+                if let Err(error) = self.refresh_monitors() {
+                    log::warn!("after a monitor went away, the monitors were not read: {error}");
+                }
+                return monitor_gone(
+                    name,
+                    "the read after the apply call no longer lists it; the change stays recorded                      and goes back when the monitor returns",
+                )
+                .with_steps(steps.list());
             }
             Rejection::Apply(error) => error,
             Rejection::ReadBack(error) => AppError::internal(format!(
@@ -914,6 +942,8 @@ impl Core {
                 monitor: monitor.clone(),
                 mode: previous,
                 scaling: scaling_choice_for(record.previous.scaling),
+                // The recorded scaling itself, as far as the route can write it (D-035).
+                exact_scaling: Some(record.previous.scaling),
             }],
         };
         self.set_busy(busy, StepKind::Restore);
@@ -1398,12 +1428,13 @@ impl Core {
         }
         let putback = self.restore_baselines(None, true)?;
         if putback.left.is_empty() {
-            self.update(|state| {
-                if state.recovery.status == RecoveryStatus::Incomplete {
-                    state.recovery.status = RecoveryStatus::Clean;
-                    state.recovery.still_changed.clear();
-                }
-            });
+            // A moved-aside journal may still have a change on screen: recovery stays
+            // incomplete, so the next Restore everything puts the saved configuration back
+            // (D-023, D-036).
+            let journal_lost = self.inner.journal_lost.load(Ordering::Relaxed);
+            if !self.inner.journal.needs_recovery() && !journal_lost {
+                self.update(settle_recovery);
+            }
             return Ok(RestoreOutcome {
                 restored: putback.restored,
                 steps: putback.steps.list(),
@@ -1482,6 +1513,29 @@ mod tests {
         ] {
             assert!(check_monitor_id(&id(&refused)).is_err(), "{refused:?}");
         }
+    }
+
+    #[test]
+    fn req_disp_26_empty_device_path_needs_both_edid_ids() {
+        // The LG on the test PC with its monitor device disabled in Device Manager, as
+        // resswap-diag read it on 14 Nov 2026: no device path, valid EDID ids.
+        let id = |manufacturer: Option<u16>, product: Option<u16>| MonitorId {
+            device_path: String::new(),
+            edid_manufacturer_id: manufacturer,
+            edid_product_code: product,
+            connector_instance: 1,
+        };
+        assert!(check_monitor_id(&id(Some(0x6D1E), Some(0x5B8E))).is_ok());
+        for (manufacturer, product) in [(None, None), (Some(0x6D1E), None), (None, Some(0x5B8E))] {
+            let refused = check_monitor_id(&id(manufacturer, product)).unwrap_err();
+            assert_eq!(refused.code(), ErrorCode::Internal);
+        }
+        // A path with a control character stays refused even with EDID ids.
+        let bell = MonitorId {
+            device_path: String::from("line\u{7}bell"),
+            ..id(Some(0x6D1E), Some(0x5B8E))
+        };
+        assert!(check_monitor_id(&bell).is_err());
     }
 
     #[test]

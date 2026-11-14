@@ -129,6 +129,18 @@ impl Core {
         Some(running.failed_reverts)
     }
 
+    /// Counts one failed revert of `change_id`'s countdown without moving its revert time, so
+    /// a later failed try at its end is not raised a second time.
+    pub(crate) fn count_failed_revert(&self, change_id: &str) {
+        let mut countdown = guard(&self.inner.countdown);
+        if let Some(running) = countdown
+            .as_mut()
+            .filter(|running| running.change_id == change_id)
+        {
+            running.failed_reverts = running.failed_reverts.saturating_add(1);
+        }
+    }
+
     /// How long until the next tick of `change_id` is due; `None` once that countdown ended.
     fn countdown_wait_ms(&self, change_id: &str) -> Option<u64> {
         let countdown = guard(&self.inner.countdown);
@@ -234,6 +246,9 @@ impl Core {
                 && let Err(error) =
                     core.revert_locked(&pending.change_id, RevertReason::KeepWindowClosed)
             {
+                // Counted as the countdown's first failed try, so the countdown does not
+                // raise the same error again at its end; its revert time stays as it was.
+                core.count_failed_revert(&pending.change_id);
                 core.raise(error_source_for(pending.source), &error);
             }
         });
