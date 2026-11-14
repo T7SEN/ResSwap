@@ -132,3 +132,116 @@ Each entry records a choice that departs from the original plan for ResSwap, or 
 - Reason: in the first P0 gate run, the first starts right after a fresh debug build took 24,454 and 18,102 ms, while a repeat one minute later on the same exe took 387 to 478 ms on all five starts. The slow starts come from the exe being new to Windows, not from ResSwap. With every file of the phase counted, one such run would fail every later gate of that phase.
 - Departs from: the budget rule that a gate row counts every result of the phase, and the single warm-up start.
 - Requirements: REQ-PERF-05, REQ-PERF-07.
+
+## D-018 Start-up recovery waits while a profile's game runs
+
+- Date: 12 Nov 2026.
+- Decision: When ResSwap starts and its journal holds a change it never put back, and the exe of any saved profile is in the process list, recovery waits until no such exe is running, then restores. It never changes the desktop resolution under a running game. The wait is built in P4, when the process list reader exists; until then recovery restores at once, as REQ-SAFE-06 says.
+- Reason: a start of ResSwap during a game would otherwise change that game's resolution. Pillar 3 says ResSwap never acts against a running game.
+- Departs from: REQ-SAFE-06, which restores at once, and D-007 and REQ-WATCH-02, which take snapshots only while auto-switch runs: while recovery waits, one snapshot every 2 s runs even with auto-switch paused. P4 updates REQ-WATCH-02 and the safety rules with the wait.
+- Requirements: REQ-SAFE-06, REQ-WATCH-02.
+
+## D-019 Release builds clear WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS at start
+
+- Date: 14 Nov 2026 (the answer of 12 Nov 2026 to the P0 report, built at P1).
+- Decision: main() calls system::webview_env::clear_browser_arguments() right after the DLL search limit and before it reads its arguments, starts a thread or builds the web view. In a release build it removes WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS from the process environment with one std::env::remove_var call; a debug build keeps it, because the e2e:app runner opens port 9223 on its own debug build that way. remove_var is unsafe in edition 2024; the Rust 1.99.1 documentation calls it sound in a single-threaded program and always sound on Windows, and the one call sits in src-tauri/src/system/webview_env.rs with its SAFETY comment.
+- Reason: WebView2 adds that variable's text to the browser arguments of every web view in the process, so any program that can set the player's environment could open a remote debugging port on ResSwap's window and call every command that window may call.
+- Checked: system::webview_env::tests::req_sec_06_release_build_clears_webview_arguments passes under cargo test (variable kept) and cargo test --release (variable removed), 14 Nov 2026. Not checked: a release ResSwap.exe started with the variable set keeps the port closed; that needs a release-exe start, which this build leaves to the hardware checklist.
+- Departs from: nothing in the brief; it narrows the earlier view that this property belongs to WebView2 alone.
+- Requirements: REQ-SEC-06.
+
+## D-020 A debug app run on the fake backend gets a clock that follows the real time
+
+- Date: 14 Nov 2026 (the answer of 12 Nov 2026 to the P0 report, built at P1).
+- Decision: FakeClock has two modes. FakeClock::new() stands still until a test advances it, and every test keeps it. FakeClock::following_real_time() starts at monotonic time 0 and epoch time FAKE_EPOCH_MS (11 Nov 2026 00:00 UTC) and then moves with std::time::Instant, so a change to the Windows clock cannot bend it; advance() still adds time, and its readings are not logged, so a long run does not grow the call log. select_backends gives the real-time mode to a debug app run with RESSWAP_BACKEND=fake; Fakes::new keeps the still clock.
+- Reason: e2e:app and the Narrator checks drive the real window over the fake backend. With a still clock the keep-mode countdown would never reach 0 there, so the Timeout revert could not be seen. The epoch stays fixed so screenshots do not depend on the day of the run.
+- Departs from: the first wording of the fake clock rule (it advanced only when a test advanced it).
+- Requirements: REQ-SAFE-03, REQ-SAFE-05, REQ-DISP-01.
+
+## D-021 Hidden monitors keep their mode list but get no stretched presets
+
+- Date: 14 Nov 2026.
+- Decision: a monitor hidden as a virtual display (REQ-DISP-07) is still returned by list_monitors with its mode list, so the player can pick a listed mode with the show-hidden toggle on, but it gets an empty list of stretched presets.
+- Reason: a virtual display has no panel to stretch, and the preset buttons would suggest a stretch that means nothing there. Keeping the mode list keeps the toggle useful for a real monitor that is hidden by mistake.
+- Departs from: nothing in the brief; it settles how the "no stretched modes for virtual displays" rule and the show-hidden toggle work together.
+- Requirements: REQ-DISP-07, REQ-DISP-08, REQ-DISP-09.
+
+## D-022 Interlaced modes are left out of the mode list
+
+- Date: 14 Nov 2026.
+- Decision: a GDI mode entry with DM_INTERLACED in dmDisplayFlags is left out of every mode list and is never applied.
+- Reason: interlaced modes are not stretched-mode candidates, and leaving them out means a progressive refresh rational from the CCD target is never attached to an interlaced entry of the same size and whole-hertz rate. No Windows document requires either choice.
+- Departs from: REQ-DISP-06 as written, which lists every 32 bpp mode Windows offers.
+- Requirements: REQ-DISP-06, REQ-DISP-17.
+
+## D-023 Damaged or newer settings and journal files are moved aside
+
+- Date: 14 Nov 2026.
+- Decision: a settings.json that fails to parse is renamed settings.damaged-<epoch ms>.json, and one written by a newer ResSwap is renamed settings.newer-<epoch ms>.json; memory then gets settings.json.bak or the defaults, which are also written back to settings.json without touching the .bak, and start-up reports SETTINGS_CORRUPT. The journal does the same with journal.damaged-<ms>.json and journal.newer-<ms>.json and reports RECOVERY_INCOMPLETE. If a rename fails, the file stays and every save of that file is refused (SETTINGS_WRITE_FAILED or JOURNAL_WRITE_FAILED) until the next start, so it is never overwritten and no change runs without a record. Each of the three files is read with a cap of 1 MiB.
+- Reason: the damaged or newer file stays for the player and the log, the next start reads a good file, and a later save cannot copy a damaged file over the last good copy.
+- Departs from: REQ-SET-05, which says the fallback replaces the file in memory only.
+- Requirements: REQ-SET-03, REQ-SET-05, REQ-SET-06, REQ-SAFE-01.
+
+## D-024 One monitor goes back on its own route; the saved snapshot only when every monitor does
+
+- Date: 14 Nov 2026.
+- Decision: putting one monitor back (Revert, the end of the countdown, closing the keep-mode window, a superseded or rejected change, Restore native, Quit) uses the same apply call and route as the change, on that monitor only. The saved CCD snapshot, taken in the same journal write as the first open change and removed with the last, is applied only when every journaled monitor returns to its baseline: Restore everything, and start-up recovery when every journaled monitor needs it, with SDC_USE_DATABASE_CURRENT as the fallback. A snapshot restore keeps every available monitor connected since the snapshot, with its live modes.
+- Reason: applying the whole snapshot to put back one monitor would also reset every other monitor, and would turn off a monitor connected after the first change. The same route keeps a CDS_FULLSCREEN safety net in place.
+- Departs from: the first wording of the restore rules, which put every return to the baseline through the snapshot.
+- Requirements: REQ-SAFE-02, REQ-DISP-13, REQ-DISP-21, REQ-DISP-22.
+
+## D-025 Restore everything reports a disconnected monitor as still changed
+
+- Date: 14 Nov 2026.
+- Decision: when Restore everything finds a journaled monitor that is not connected, it keeps that monitor's entries, restores the rest, and answers RECOVERY_INCOMPLETE with the monitor in stillChanged; MONITOR_GONE goes to the log. When another mode replaces a pending change during the countdown, the countdown stops, nothing is put back and no mode-reverted is sent; the entry closes when the screen shows the state before the change, and otherwise stays open with status applied, as an active change Restore can still undo.
+- Reason: the window can then list everything that is still changed in one place, and ResSwap never fights a mode a game or Windows set (REQ-WATCH-07).
+- Departs from: the first error list of restore_everything, which named MONITOR_GONE, and the journal status moves, which had no move for the kept-open case.
+- Requirements: REQ-DISP-22, REQ-DISP-23, REQ-SAFE-09, REQ-WATCH-07.
+
+## D-026 Change IDs are built without a new crate
+
+- Date: 14 Nov 2026.
+- Decision: a change ID is a lowercase UUID in the version 4 layout, built from the standard library's per-process random hash keys mixed with a serial number and the time.
+- Reason: no UUID or random crate is pinned, a new dependency needs a pin refresh, and the IDs only tell changes apart in the journal and the window; they guard nothing.
+- Departs from: nothing in the brief.
+- Requirements: REQ-SAFE-01.
+
+## D-027 Log files rotate at about 1 MB and five old files are kept
+
+- Date: 14 Nov 2026.
+- Decision: the log plugin writes ResSwap.log up to 1,000,000 bytes, then starts a new file and keeps the five newest old ones (tauri-plugin-log 2.10.2 RotationStrategy::KeepSome(5)), so the log folder holds about 6 MB at most.
+- Reason: the plugin's defaults, a 40,000 byte file and one kept file that is deleted on rotation, would lose the timing and error lines of a hardware round, because a debug build logs at the Debug level. The logs stay on the PC (REQ-PRIV-04).
+- Departs from: nothing in the brief; it sets the size and count the logging rules left open.
+- Requirements: REQ-SET-09, REQ-PRIV-04, REQ-PERF-03.
+
+## D-028 The revert countdown setting is between 1 and 60 seconds until P2
+
+- Date: 14 Nov 2026.
+- Decision: save_settings refuses a revert countdown of 0 or of more than 60 seconds (INTERNAL with a plain detail); the default stays 10 seconds (D-007). The P2 open item on the allowed range replaces this bound.
+- Reason: with no upper bound a value from the window could keep an untested mode on screen for years, which breaks the safety of the countdown. 60 seconds is the widest range offered for the P2 choice.
+- Departs from: nothing in the brief; REQ-SET-08 leaves the range to P2.
+- Requirements: REQ-SET-08, REQ-SEC-08, REQ-SAFE-03.
+
+## D-029 A revert that cannot write its record leaves the change pending
+
+- Date: 14 Nov 2026.
+- Decision: the countdown stops only once a revert has written its reverting status, the write that gives the Ticket. If that write fails (JOURNAL_WRITE_FAILED), nothing is put back: the change stays pending with its countdown, the keep-mode window stays, and changes for other monitors keep waiting. The countdown reverts at its end and after that tries again once a second, raising only its first failed try. A Revert from the window returns the error; closing the keep-mode window raises it and leaves the countdown to revert; a superseding apply or Restore native fails with it; a resume raises it. Restore everything restores the change anyway once its own restoring status is on disk, taking it over as an active change. Quit cannot wait, so it reports RECOVERY_INCOMPLETE and leaves the entry, still pending, for start-up recovery.
+- Reason: stopping the countdown before that write left an unconfirmed mode, perhaps a black screen, with nothing left to revert it.
+- Departs from: the first wording of the countdown rules, which stopped the countdown at the start of every revert.
+- Requirements: REQ-SAFE-01, REQ-SAFE-03, REQ-SAFE-05, REQ-SAFE-06.
+
+## D-030 Putting a previous state back verifies the scaling too
+
+- Date: 14 Nov 2026.
+- Decision: a put-back counts as verified only when the mode and the scaling both read back as recorded. When the mode reads back but the scaling differs, the entry stays open, so the baseline is never closed with the scaling changed. The player sees no mode-reverted; the keep-mode window closes, the countdown stops, Home lists an active change with the previous mode and the scaling read back, and the error is RECOVERY_INCOMPLETE with stillChanged. Restore everything then puts the scaling back from the saved snapshot. Writing the exact recorded scaling during a put-back waits for the route and scaling control the HW-P1 round picks.
+- Reason: RECOVERY_INCOMPLETE is the code for a put-back that did not verify while the journal still lists the change, and it leads the player to Restore everything. Reporting the revert as done would claim a step that did not finish (REQ-SAFE-17).
+- Departs from: the first put-back rule, which checked the size and rate only.
+- Requirements: REQ-SAFE-17, REQ-NV-25, REQ-DISP-22.
+
+## D-031 A failed read after a successful apply is INTERNAL
+
+- Date: 14 Nov 2026.
+- Decision: when the apply call succeeds but the read after it fails, the read error is logged and the previous state is still put back. The error is INTERNAL, naming the failed read and how the put-back ended, or RECOVERY_INCOMPLETE naming the failed read when the put-back fails too. It is never MODE_REJECTED.
+- Reason: a failed read says nothing about whether Windows accepted the mode, so calling it a rejected mode would disguise one error as another.
+- Departs from: nothing in the brief; it narrows when MODE_REJECTED is used.
+- Requirements: REQ-UI-09, REQ-SAFE-17, REQ-DISP-13.
