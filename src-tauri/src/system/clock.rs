@@ -13,6 +13,12 @@ pub trait Clock: Send + Sync {
 
     /// Milliseconds since the Unix epoch, for times shown to the player.
     fn epoch_ms(&self) -> u64;
+
+    /// Whether time moves by itself, so a timer thread can wait for it. False only for the
+    /// still fake clock of the tests, whose timers run when a test moves the clock.
+    fn follows_real_time(&self) -> bool {
+        true
+    }
 }
 
 /// The system clock.

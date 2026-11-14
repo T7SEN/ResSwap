@@ -423,6 +423,61 @@ impl AppError {
         }
     }
 
+    /// The payload of a coded variant, to change; `None` for INTERNAL.
+    fn failure_mut(&mut self) -> Option<&mut Failure> {
+        match self {
+            Self::ModeRejected(failure)
+            | Self::ModeTestFailed(failure)
+            | Self::ModeNotOffered(failure)
+            | Self::RefreshNotAvailable(failure)
+            | Self::MonitorGone(failure)
+            | Self::LayoutRestoreFailed(failure)
+            | Self::NotNvidia(failure)
+            | Self::NvapiMissing(failure)
+            | Self::NvapiCallFailed(failure)
+            | Self::CustomTimingRefused(failure)
+            | Self::NvModesParseFailed(failure)
+            | Self::RegistryReadFailed(failure)
+            | Self::RegistryVerifyMismatch(failure)
+            | Self::UacDeclined(failure)
+            | Self::ElevatedToolFailed(failure)
+            | Self::DriverRestartNeedsReboot(failure)
+            | Self::DriverRestartRefusedGameRunning(failure)
+            | Self::ScalingNotApplied(failure)
+            | Self::JournalWriteFailed(failure)
+            | Self::RecoveryIncomplete(failure)
+            | Self::SettingsCorrupt(failure)
+            | Self::SettingsWriteFailed(failure)
+            | Self::ProfileInvalid(failure)
+            | Self::ShortcutFailed(failure)
+            | Self::HotkeyTaken(failure)
+            | Self::AutostartFailed(failure)
+            | Self::UpdateCheckFailed(failure)
+            | Self::UpdateSignatureInvalid(failure) => Some(failure),
+            Self::Internal { .. } => None,
+        }
+    }
+
+    /// The same error with `steps` as its step list, so the window sees which steps of a
+    /// multi-step operation finished. INTERNAL carries no steps and comes back unchanged.
+    #[must_use]
+    pub fn with_steps(mut self, steps: Vec<StepReport>) -> Self {
+        if let Some(failure) = self.failure_mut() {
+            failure.steps = steps;
+        }
+        self
+    }
+
+    /// The same error with its context changed by `edit`, for the values a message needs
+    /// that only the caller knows. INTERNAL has no context and comes back unchanged.
+    #[must_use]
+    pub fn with_context(mut self, edit: impl FnOnce(&mut ErrorContext)) -> Self {
+        if let Some(failure) = self.failure_mut() {
+            edit(&mut failure.context);
+        }
+        self
+    }
+
     /// The shape the window receives.
     pub fn to_ipc(&self) -> IpcError {
         let failure = self.failure();
