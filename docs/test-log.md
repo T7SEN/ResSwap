@@ -96,3 +96,95 @@ On commit 463032d, with the P1 work uncommitted. Windows build 26200, WebView2 1
 | 6    | pnpm budgets P1                                            | exit 2, waiting: installer pass; first-paint-debug 691 ms, pass; mode-switch missing (a measurement the maintainer takes in the HW-P1 round) |
 
 Screenshots and measurements: docs/results/2026-11-14/.
+
+## 2026-11-14 P1 fix for monitors without a device path, gate run 1
+
+On commit 2693a2b, with the fix uncommitted: a monitor whose device is disabled in Device Manager reports no device path, and every command error is now written to the log. Windows build 26200, WebView2 157.0.4341.46, Node 26.12.1, Rust 1.99.1.
+
+| Step | Command                                                    | Result                                                                                                                                       |
+| ---- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | pnpm typecheck                                             | pass                                                                                                                                         |
+| 1    | pnpm lint                                                  | pass                                                                                                                                         |
+| 1    | pnpm format:check                                          | pass                                                                                                                                         |
+| 1    | pnpm test                                                  | pass, 9 files, 85 tests                                                                                                                      |
+| 2    | cargo fmt --all --check                                    | pass                                                                                                                                         |
+| 2    | cargo clippy --all-targets --all-features, warnings denied | pass                                                                                                                                         |
+| 2    | cargo test --all-features                                  | pass, 264 tests (lib 196, 4 ignored; ipc 17; pipeline 50; shell 1)                                                                           |
+| 3    | pnpm tauri build                                           | pass, installer ResSwap_0.1.0_x64-setup.exe 2,615,152 bytes; release exe 11,133,952 bytes                                                    |
+| 3    | dist mock marker check                                     | pass, no RESSWAP_MOCK_CORE in dist                                                                                                           |
+| 3    | mt.exe manifest check on the release exe                   | pass, Common-Controls 6.0.0.0 and asInvoker                                                                                                  |
+| 3    | resswap-diag left out of the bundle                        | pass, installer.nsi does not name it and target\release holds no resswap-diag.exe                                                            |
+| 4    | pnpm e2e:mock                                              | pass, 69 tests                                                                                                                               |
+| 5    | pnpm e2e:app (phase P1)                                    | pass, 9 tests                                                                                                                                |
+| 6    | pnpm budgets P1                                            | exit 2, waiting: installer pass; first-paint-debug 525 ms, pass; mode-switch missing (a measurement the maintainer takes in the HW-P1 round) |
+
+Screenshots and measurements: docs/results/2026-11-14/.
+
+## 2026-11-14 P1 fix for monitors without a device path, gate run 2 (rerun after the review fixes)
+
+On commit 2693a2b, with the fix and the review fixes uncommitted. Windows build 26200, WebView2 157.0.4341.46, Node 26.12.1, Rust 1.99.1. The review fixes touched files every step builds or tests, so all six steps ran again. Step 1 first failed one test, whose list of scenario IDs lacked the new monitors-without-path scenario; the list was updated and step 1 then passed.
+
+| Step | Command                                                    | Result                                                                                                                                       |
+| ---- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | pnpm typecheck                                             | pass                                                                                                                                         |
+| 1    | pnpm lint                                                  | pass                                                                                                                                         |
+| 1    | pnpm format:check                                          | pass                                                                                                                                         |
+| 1    | pnpm test                                                  | pass, 9 files, 87 tests                                                                                                                      |
+| 2    | cargo fmt --all --check                                    | pass                                                                                                                                         |
+| 2    | cargo clippy --all-targets --all-features, warnings denied | pass                                                                                                                                         |
+| 2    | cargo test --all-features                                  | pass, 265 tests (lib 197, 4 ignored; ipc 17; pipeline 50; shell 1)                                                                           |
+| 3    | pnpm tauri build                                           | pass, installer ResSwap_0.1.0_x64-setup.exe 2,613,967 bytes; release exe 11,125,760 bytes                                                    |
+| 3    | dist mock marker check                                     | pass, no RESSWAP_MOCK_CORE in dist                                                                                                           |
+| 3    | mt.exe manifest check on the release exe                   | pass, Common-Controls 6.0.0.0 and asInvoker                                                                                                  |
+| 3    | resswap-diag left out of the bundle                        | pass, installer.nsi does not name it and target\release holds no resswap-diag.exe                                                            |
+| 4    | pnpm e2e:mock                                              | pass, 69 tests                                                                                                                               |
+| 5    | pnpm e2e:app (phase P1)                                    | pass, 9 tests                                                                                                                                |
+| 6    | pnpm budgets P1                                            | exit 2, waiting: installer pass; first-paint-debug 438 ms, pass; mode-switch missing (a measurement the maintainer takes in the HW-P1 round) |
+
+Screenshots and measurements: docs/results/2026-11-14/.
+
+## 2026-11-14 P1 fix batch 2 (recovery reports, put-back scaling, gone monitors), gate run 3
+
+On commit 2693a2b, with both fix batches uncommitted. Windows build 26200, WebView2 157.0.4341.46, Node 26.12.1, Rust 1.99.1. All six steps ran, because the batch touches files every step builds or tests.
+
+| Step | Command                                                    | Result                                                                                                                                       |
+| ---- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | pnpm typecheck                                             | pass                                                                                                                                         |
+| 1    | pnpm lint                                                  | pass                                                                                                                                         |
+| 1    | pnpm format:check                                          | pass                                                                                                                                         |
+| 1    | pnpm test                                                  | pass, 9 files, 91 tests                                                                                                                      |
+| 2    | cargo fmt --all --check                                    | pass                                                                                                                                         |
+| 2    | cargo clippy --all-targets --all-features, warnings denied | pass                                                                                                                                         |
+| 2    | cargo test --all-features                                  | pass, 272 tests (lib 199, 4 ignored; ipc 17; pipeline 55; shell 1)                                                                           |
+| 3    | pnpm tauri build                                           | pass, installer ResSwap_0.1.0_x64-setup.exe 2,615,317 bytes; release exe 11,128,320 bytes                                                    |
+| 3    | dist mock marker check                                     | pass, no RESSWAP_MOCK_CORE in dist                                                                                                           |
+| 3    | mt.exe manifest check on the release exe                   | pass, Common-Controls 6.0.0.0 and asInvoker                                                                                                  |
+| 3    | resswap-diag left out of the bundle                        | pass, installer.nsi does not name it and target\release holds no resswap-diag.exe                                                            |
+| 4    | pnpm e2e:mock                                              | pass, 69 tests                                                                                                                               |
+| 5    | pnpm e2e:app (phase P1)                                    | pass, 9 tests                                                                                                                                |
+| 6    | pnpm budgets P1                                            | exit 2, waiting: installer pass; first-paint-debug 551 ms, pass; mode-switch missing (a measurement the maintainer takes in the HW-P1 round) |
+
+Screenshots and measurements: docs/results/2026-11-14/.
+
+## 2026-11-14 P1 fix batch 2, gate run 4 (rerun after the review fixes)
+
+On commit 2693a2b, with both fix batches and the review fixes uncommitted. Windows build 26200, WebView2 157.0.4341.46, Node 26.12.1, Rust 1.99.1. The review fixes touched files every step builds or tests, so all six steps ran again.
+
+| Step | Command                                                    | Result                                                                                                                                       |
+| ---- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | pnpm typecheck                                             | pass                                                                                                                                         |
+| 1    | pnpm lint                                                  | pass                                                                                                                                         |
+| 1    | pnpm format:check                                          | pass                                                                                                                                         |
+| 1    | pnpm test                                                  | pass, 9 files, 92 tests                                                                                                                      |
+| 2    | cargo fmt --all --check                                    | pass                                                                                                                                         |
+| 2    | cargo clippy --all-targets --all-features, warnings denied | pass                                                                                                                                         |
+| 2    | cargo test --all-features                                  | pass, 279 tests (lib 200, 4 ignored; ipc 17; pipeline 61; shell 1)                                                                           |
+| 3    | pnpm tauri build                                           | pass, installer ResSwap_0.1.0_x64-setup.exe 2,615,707 bytes; release exe 11,134,464 bytes                                                    |
+| 3    | dist mock marker check                                     | pass, no RESSWAP_MOCK_CORE in dist                                                                                                           |
+| 3    | mt.exe manifest check on the release exe                   | pass, Common-Controls 6.0.0.0 and asInvoker                                                                                                  |
+| 3    | resswap-diag left out of the bundle                        | pass, installer.nsi does not name it and target\release holds no resswap-diag.exe                                                            |
+| 4    | pnpm e2e:mock                                              | pass, 69 tests                                                                                                                               |
+| 5    | pnpm e2e:app (phase P1)                                    | pass, 9 tests                                                                                                                                |
+| 6    | pnpm budgets P1                                            | exit 2, waiting: installer pass; first-paint-debug 675 ms, pass; mode-switch missing (a measurement the maintainer takes in the HW-P1 round) |
+
+Screenshots and measurements: docs/results/2026-11-14/.

@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "phase": "P1",
+  "build": "debug",
+  "source": "first-paint.spec.ts",
+  "measuredAt": "2026-11-14T11:49:15.380+02:00",
+  "commit": "2693a2be5a39abc8bf564cafeddba8f6d8244a28",
+  "osBuild": 26200,
+  "timings": {
+    "firstPaintMs": {
+      "runs": [
+        544,
+        551,
+        468,
+        467,
+        443
+      ],
+      "median": 468,
+      "max": 551,
+      "from": "app.started",
+      "shellRuns": [
+        463,
+        467,
+        386,
+        366,
+        355
+      ],
+      "readyRuns": [
+        469,
+        484,
+        391,
+        371,
+        360
+      ]
+    }
+  }
+}
