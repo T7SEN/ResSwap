@@ -168,30 +168,58 @@ impl CommandFaults {
 
 /// Runs a command's work as its own task, so a panic inside it becomes INTERNAL. Without
 /// it, a panicking async command drops its responder and the window's promise never settles.
-async fn guarded<T, F>(work: F) -> Result<T, AppError>
+/// Every error a command answers is written to the log, because the window tells the player
+/// that the log has the details (REQ-UI-09).
+async fn guarded<T, F>(command: CommandName, work: F) -> Result<T, AppError>
 where
     F: Future<Output = Result<T, AppError>> + Send + 'static,
     T: Send + 'static,
 {
-    match tauri::async_runtime::spawn(work).await {
+    let result = match tauri::async_runtime::spawn(work).await {
         Ok(result) => result,
         Err(join_error) => {
             log::error!("a command task ended without a result: {join_error}");
             Err(AppError::internal("a command stopped before it finished"))
         }
+    };
+    if let Err(error) = &result {
+        let (level, line) = failure_line(command, error);
+        log::log!(level, "{line}");
     }
+    result
+}
+
+/// The log line for a command that answered an error: INTERNAL at error level, any other
+/// code at warn level, with the command, the code as the contract spells it and the detail.
+fn failure_line(command: CommandName, error: &AppError) -> (log::Level, String) {
+    let code = error.code();
+    let level = if code == ErrorCode::Internal {
+        log::Level::Error
+    } else {
+        log::Level::Warn
+    };
+    // The serde form is the contract string the window and its messages use.
+    let name = serde_json::to_value(code)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{code:?}"));
+    let line = format!("command {} answered {name}: {error}", command.name());
+    (level, line)
 }
 
 #[tauri::command]
 pub async fn list_monitors(core: State<'_, Core>) -> Result<Vec<Monitor>, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.list_monitors().await }).await
+    guarded(CommandName::ListMonitors, async move {
+        core.list_monitors().await
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn get_state(core: State<'_, Core>) -> Result<AppState, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.state().await }).await
+    guarded(CommandName::GetState, async move { core.state().await }).await
 }
 
 #[tauri::command]
@@ -200,7 +228,10 @@ pub async fn apply_mode(
     request: ApplyRequest,
 ) -> Result<ApplyOutcome, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.apply(request, ChangeSource::Window).await }).await
+    guarded(CommandName::ApplyMode, async move {
+        core.apply(request, ChangeSource::Window).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -209,7 +240,10 @@ pub async fn confirm_mode(
     request: ChangeRef,
 ) -> Result<ConfirmOutcome, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.confirm(request, ChangeSource::Window).await }).await
+    guarded(CommandName::ConfirmMode, async move {
+        core.confirm(request, ChangeSource::Window).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -218,7 +252,10 @@ pub async fn revert_mode(
     request: ChangeRef,
 ) -> Result<RevertOutcome, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.revert(request, RevertReason::Player).await }).await
+    guarded(CommandName::RevertMode, async move {
+        core.revert(request, RevertReason::Player).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -227,31 +264,47 @@ pub async fn restore_native(
     request: RestoreNativeRequest,
 ) -> Result<RestoreOutcome, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.restore_native(request, ChangeSource::Window).await }).await
+    guarded(CommandName::RestoreNative, async move {
+        core.restore_native(request, ChangeSource::Window).await
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn restore_everything(core: State<'_, Core>) -> Result<RestoreOutcome, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.restore_everything(ChangeSource::Window).await }).await
+    guarded(CommandName::RestoreEverything, async move {
+        core.restore_everything(ChangeSource::Window).await
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn list_profiles(core: State<'_, Core>) -> Result<Vec<Profile>, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.profiles().await }).await
+    guarded(
+        CommandName::ListProfiles,
+        async move { core.profiles().await },
+    )
+    .await
 }
 
 #[tauri::command]
 pub async fn save_profile(core: State<'_, Core>, request: Profile) -> Result<Profile, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.save_profile(request).await }).await
+    guarded(CommandName::SaveProfile, async move {
+        core.save_profile(request).await
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn delete_profile(core: State<'_, Core>, request: ProfileRef) -> Result<(), AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.delete_profile(request).await }).await
+    guarded(CommandName::DeleteProfile, async move {
+        core.delete_profile(request).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -260,13 +313,19 @@ pub async fn set_auto_switch(
     request: SetAutoSwitchRequest,
 ) -> Result<AutoSwitchState, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.set_auto_switch(request).await }).await
+    guarded(CommandName::SetAutoSwitch, async move {
+        core.set_auto_switch(request).await
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn list_custom_entries(core: State<'_, Core>) -> Result<CustomEntryList, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.custom_entries().await }).await
+    guarded(CommandName::ListCustomEntries, async move {
+        core.custom_entries().await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -275,7 +334,10 @@ pub async fn add_custom_mode(
     request: AddCustomModeRequest,
 ) -> Result<CustomChangeOutcome, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.add_custom_mode(request, ChangeSource::Window).await }).await
+    guarded(CommandName::AddCustomMode, async move {
+        core.add_custom_mode(request, ChangeSource::Window).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -284,7 +346,7 @@ pub async fn remove_custom_entry(
     request: RemoveCustomEntryRequest,
 ) -> Result<CustomChangeOutcome, AppError> {
     let core = core.inner().clone();
-    guarded(async move {
+    guarded(CommandName::RemoveCustomEntry, async move {
         core.remove_custom_entry(request, ChangeSource::Window)
             .await
     })
@@ -297,13 +359,20 @@ pub async fn undo_all_changes(
     request: UndoAllRequest,
 ) -> Result<CustomChangeOutcome, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.undo_all_changes(request, ChangeSource::Window).await }).await
+    guarded(CommandName::UndoAllChanges, async move {
+        core.undo_all_changes(request, ChangeSource::Window).await
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn get_settings(core: State<'_, Core>) -> Result<Settings, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.settings().await }).await
+    guarded(
+        CommandName::GetSettings,
+        async move { core.settings().await },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -312,7 +381,10 @@ pub async fn save_settings(
     request: SettingsInput,
 ) -> Result<Settings, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.save_settings(request).await }).await
+    guarded(CommandName::SaveSettings, async move {
+        core.save_settings(request).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -321,7 +393,10 @@ pub async fn set_hotkey(
     request: SetHotkeyRequest,
 ) -> Result<Settings, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.set_hotkey(request).await }).await
+    guarded(CommandName::SetHotkey, async move {
+        core.set_hotkey(request).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -330,7 +405,10 @@ pub async fn set_autostart(
     request: SetAutostartRequest,
 ) -> Result<Settings, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.set_autostart(request).await }).await
+    guarded(CommandName::SetAutostart, async move {
+        core.set_autostart(request).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -339,37 +417,55 @@ pub async fn create_play_shortcut(
     request: ProfileRef,
 ) -> Result<ShortcutCreated, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.create_play_shortcut(request).await }).await
+    guarded(CommandName::CreatePlayShortcut, async move {
+        core.create_play_shortcut(request).await
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn check_for_update(core: State<'_, Core>) -> Result<Option<UpdateInfo>, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.check_for_update().await }).await
+    guarded(CommandName::CheckForUpdate, async move {
+        core.check_for_update().await
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn install_update(core: State<'_, Core>) -> Result<(), AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.install_update(ChangeSource::Window).await }).await
+    guarded(CommandName::InstallUpdate, async move {
+        core.install_update(ChangeSource::Window).await
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn open_log_folder(core: State<'_, Core>) -> Result<(), AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.open_log_folder().await }).await
+    guarded(CommandName::OpenLogFolder, async move {
+        core.open_log_folder().await
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn get_diagnostics(core: State<'_, Core>) -> Result<Diagnostics, AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.diagnostics().await }).await
+    guarded(CommandName::GetDiagnostics, async move {
+        core.diagnostics().await
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn dismiss_error(core: State<'_, Core>, request: ErrorRef) -> Result<(), AppError> {
     let core = core.inner().clone();
-    guarded(async move { core.dismiss_error(request).await }).await
+    guarded(CommandName::DismissError, async move {
+        core.dismiss_error(request).await
+    })
+    .await
 }
 
 /// The invoke handler with every command, in the order of `CommandName::ALL`.
@@ -470,5 +566,29 @@ mod tests {
             ]
         );
         assert_eq!(CommandFaults::parse(""), CommandFaults::default());
+    }
+
+    #[test]
+    fn req_ui_09_command_errors_reach_the_log() {
+        let refused = AppError::internal("refused a request: test detail");
+        let (level, line) = failure_line(CommandName::ApplyMode, &refused);
+        assert_eq!(level, log::Level::Error);
+        assert_eq!(
+            line,
+            "command apply_mode answered INTERNAL: internal error: refused a request: test detail"
+        );
+        let offered = AppError::ModeNotOffered(Box::new(crate::error::Failure::new(
+            "1350 x 1080 is not in the monitor's mode list",
+        )));
+        let (level, line) = failure_line(CommandName::ApplyMode, &offered);
+        assert_eq!(level, log::Level::Warn);
+        assert!(
+            line.starts_with("command apply_mode answered MODE_NOT_OFFERED: "),
+            "{line}"
+        );
+        assert!(
+            line.ends_with("1350 x 1080 is not in the monitor's mode list"),
+            "{line}"
+        );
     }
 }
