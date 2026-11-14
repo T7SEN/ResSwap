@@ -7,6 +7,17 @@ repository = "https://github.com/T7SEN/ResSwap"
 edition = "2024"
 rust-version = "1.99.1"
 publish = false
+default-run = "resswap"
+
+[features]
+# Builds the read-only diagnostics tool. Off by default, so the app build and its installer
+# leave the tool out (REQ-DISP-25).
+diag = []
+
+[[bin]]
+name = "resswap-diag"
+path = "src/bin/resswap-diag.rs"
+required-features = ["diag"]
 
 [lib]
 # The library name differs from the binary name because Cargo on Windows
@@ -22,7 +33,19 @@ tauri = { version = "=2.12.5", features = ["tray-icon"] }
 tauri-plugin-global-shortcut = "=2.4.1"
 tauri-plugin-log = "=2.10.2"
 tauri-plugin-single-instance = { version = "=2.5.5", default-features = false }
-windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }
+windows = { version = "=0.62.2", features = [
+  "Win32_Devices_DeviceAndDriverInstallation",
+  "Win32_Devices_Display",
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_System_Com",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Power",
+  "Win32_System_Registry",
+  "Win32_System_SystemServices",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
 ts-rs = "=12.0.1"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
