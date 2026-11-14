@@ -245,3 +245,43 @@ Each entry records a choice that departs from the original plan for ResSwap, or 
 - Reason: a failed read says nothing about whether Windows accepted the mode, so calling it a rejected mode would disguise one error as another.
 - Departs from: nothing in the brief; it narrows when MODE_REJECTED is used.
 - Requirements: REQ-UI-09, REQ-SAFE-17, REQ-DISP-13.
+
+## D-032 The apply route is GDI with DMDFO_STRETCH and the CDS_FULLSCREEN flag
+
+- Date: 14 Nov 2026.
+- Decision: ResSwap applies a mode with ChangeDisplaySettingsExW, DM_DISPLAYFIXEDOUTPUT with DMDFO_STRETCH for full screen, and the temporary flag CDS_FULLSCREEN. This is the default every release build already uses; the CCD route and flag 0 stay behind the debug-only route switch for the NVIDIA round. The state is still read through CCD, and a put-back uses the same route and flag.
+- Reason: on the test PC, with both monitor devices disabled in Device Manager, the GDI route kept the exact refresh rate and target timing, read back STRETCHED and filled the screen with no black bars. The CCD route kept the timing and filled the screen too, but its path scaling read Identity, so the stretch came from the driver's own setting rather than from ResSwap's request. With CDS_FULLSCREEN, Windows put the start mode back when ResSwap quit and when its process was ended, and kept the stretched mode through the lock screen, the Ctrl+Alt+Del screen and a UAC prompt. With flag 0 the mode stayed after both until Restore everything.
+- Departs from: nothing in the brief; it settles the route and flag the P1 build left open.
+- Requirements: REQ-DISP-12, REQ-DISP-14, REQ-DISP-15, REQ-SAFE-06, REQ-NV-25.
+
+## D-033 A debug build's start-up report lists only what is still changed
+
+- Date: 14 Nov 2026.
+- Decision: at start, a debug build on the Win32 backend reads the monitors before it reports. Unfinished entries whose monitor already shows its baseline, or was changed outside ResSwap, are closed in the journal, as a release build closes them; only the monitors that still differ, or are not connected, are reported, with Restore everything offered for them; a monitor that is not connected is not marked missing, so its return puts nothing back by itself. When nothing is left, recovery is clean and nothing is raised. Nothing on the display changes at start either way.
+- Reason: on the test PC Windows put a CDS_FULLSCREEN mode back when ResSwap quit, and the earlier report still said that something was left changed, a claim the screen did not bear out.
+- Departs from: the first form of the start-up rule for debug builds, which reported every open entry without reading the monitors.
+- Requirements: REQ-SAFE-07, REQ-SAFE-17.
+
+## D-034 A raised RECOVERY_INCOMPLETE leaves once nothing is left changed
+
+- Date: 14 Nov 2026.
+- Decision: when a Restore everything leaves no journal entry open, and no moved-aside journal waits for its fallback (D-036), recovery becomes clean and the core removes every raised RECOVERY_INCOMPLETE from the error list in the same state change, whatever raised it: start-up, a revert that could not put the mode back, or a monitor that came back. The window and, from P5, the tray then stop pointing at a state that is gone.
+- Reason: on the test PC the start-up line "could not put everything back" stayed on Home after Restore everything had put everything back.
+- Departs from: raised errors leaving only through dismiss_error.
+- Requirements: REQ-DISP-22, REQ-SAFE-17.
+
+## D-035 A put-back writes the recorded scaling as far as the route can
+
+- Date: 14 Nov 2026.
+- Decision: putting a recorded state back (Revert, the end of the countdown, a rejected apply, and the per-monitor fallback of Restore everything) asks for the scaling recorded in the journal. The GDI route, which release builds use (D-032), sends DMDFO_STRETCH for a stretched state and DMDFO_CENTER for a centred one, and leaves the field clear for any other, so Windows picks and the put-back can read back another scaling; that case still ends in RECOVERY_INCOMPLETE, and Restore everything's saved snapshot then writes the exact value. The CCD route writes the recorded value itself, with IDENTITY sent as PREFERRED when the sizes differ and CUSTOM, which only a hardware vendor's own app should use, never written. The read-back check of D-030 still decides whether the put-back verified.
+- Reason: asking only for full screen or no change left a stretched path behind when the state put back had been kept with another scaling, which then ended in RECOVERY_INCOMPLETE.
+- Departs from: D-030's put-back, which asked for full screen or no change and left writing the exact scaling until the route was known.
+- Requirements: REQ-NV-25, REQ-SAFE-17, REQ-DISP-22.
+
+## D-036 Outside changes and a moved-aside journal keep Restore everything careful
+
+- Date: 14 Nov 2026.
+- Decision: when start-up recovery closes a monitor's entries because that monitor was changed outside ResSwap while another monitor still has an open change, the saved snapshot is dropped, so Restore everything puts back each listed monitor on its own route and never the old mode over the outside change. While a journal that was damaged or newer was moved aside at start (D-023), a Restore everything that puts back every listed change leaves recovery incomplete; the next one, with nothing listed, puts the saved configuration back and ends that state.
+- Reason: the snapshot holds every monitor's mode from before the first change, so applying it after an outside change would fight that change; and a moved-aside journal can still have a change on screen that only the saved-configuration fallback puts back.
+- Departs from: D-024's snapshot use whenever every journaled monitor goes back, and the earlier clean-up that ended a moved-aside journal's state with any clean Restore everything.
+- Requirements: REQ-DISP-22, REQ-WATCH-07, REQ-SAFE-06.
