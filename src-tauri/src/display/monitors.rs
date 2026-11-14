@@ -72,8 +72,13 @@ pub fn display_name(name: Option<&str>) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
+/// Whether a request can name this monitor: a device path, or both EDID ids (REQ-DISP-26).
+pub(crate) fn has_identity(id: &MonitorId) -> bool {
+    !id.device_path.is_empty() || has_edid_ids(id)
+}
+
 /// Whether both ids carry valid EDID ids (edidIdsValid set when they were read).
-fn has_edid_ids(id: &MonitorId) -> bool {
+pub(crate) fn has_edid_ids(id: &MonitorId) -> bool {
     id.edid_manufacturer_id.is_some() && id.edid_product_code.is_some()
 }
 
@@ -138,10 +143,11 @@ pub fn find_monitor<'a>(stored: &MonitorId, live: &'a [RawMonitor]) -> Option<&'
 /// one read. The native mode is the backend's preferred mode, never the largest listed mode
 /// (REQ-DISP-04). A hidden monitor gets no stretched presets: ResSwap offers stretched sizes
 /// for real monitors only, and the player can still pick a listed mode with the show-hidden
-/// toggle on (REQ-DISP-07, REQ-DISP-08).
+/// toggle on (REQ-DISP-07, REQ-DISP-08). A monitor with neither a device path nor both EDID
+/// ids gets none either: no request can name it, so a preset could only fail (REQ-DISP-26).
 pub fn to_monitor(raw: &RawMonitor) -> Monitor {
     let hidden_reason = hidden_reason(&raw.adapter_instance_id, raw.output_technology);
-    let presets = if hidden_reason.is_some() {
+    let presets = if hidden_reason.is_some() || !has_identity(&raw.id) {
         Vec::new()
     } else {
         presets(raw.native, raw.current, &raw.modes)
@@ -409,5 +415,53 @@ mod tests {
         // No EDID ids on one side: only the device path counts, and an empty path never does.
         assert!(!same_monitor(&lg, &id("moved", None, 0)));
         assert!(!same_monitor(&id("", None, 0), &id("", None, 0)));
+    }
+
+    #[test]
+    fn req_disp_26_disabled_monitor_devices_match_by_edid_ids() {
+        // Both monitors of the test PC with their devices disabled in Device Manager, as
+        // resswap-diag read them on 14 Nov 2026: empty device paths, distinct EDID ids.
+        let lg = id("", Some((0x6D1E, 0x5B8E)), 1);
+        let samsung = id("", Some((0x2D4C, 0x707D)), 0);
+        let live = [&lg, &samsung];
+        assert_eq!(match_monitor(&lg, &live), Some(0));
+        assert_eq!(match_monitor(&samsung, &live), Some(1));
+        assert!(!same_monitor(&lg, &samsung));
+        // The same monitor once its device is enabled again: the path appears, and the
+        // EDID ids still tie the two records together.
+        // Synthetic, shaped like a monitor interface path.
+        let enabled = id(
+            r"\\?\DISPLAY#GSM5B8E#synthetic&UID1#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}",
+            Some((0x6D1E, 0x5B8E)),
+            1,
+        );
+        assert!(same_monitor(&lg, &enabled));
+        assert_eq!(match_monitor(&lg, &[&samsung, &enabled]), Some(1));
+        // The fixture models the disabled setup.
+        let fixture = known_monitors(FixtureProfile::TestPc);
+        assert!(fixture[0].id.device_path.is_empty());
+        assert!(has_edid_ids(&fixture[0].id));
+    }
+
+    #[test]
+    fn req_disp_26_a_monitor_no_request_can_name_gets_no_presets() {
+        let mut raw = known_monitors(FixtureProfile::TestPc).remove(0);
+        assert!(!to_monitor(&raw).presets.is_empty());
+        raw.id.edid_manufacturer_id = None;
+        raw.id.edid_product_code = None;
+        assert!(!has_identity(&raw.id));
+        assert!(to_monitor(&raw).presets.is_empty());
+    }
+
+    #[test]
+    fn req_disp_26_identical_monitors_without_paths_are_not_told_apart() {
+        // Two identical monitors on equal connector instances (one per adapter), both with
+        // their devices disabled: nothing tells them apart, so a fresh read matches neither
+        // and the caller answers MONITOR_GONE instead of changing the wrong one. Stored
+        // records still count them as one monitor, a known limit until P6.
+        let first = id("", Some((0x6D1E, 0x5B8E)), 0);
+        let second = id("", Some((0x6D1E, 0x5B8E)), 0);
+        assert_eq!(match_monitor(&first, &[&first, &second]), None);
+        assert!(same_monitor(&first, &second));
     }
 }

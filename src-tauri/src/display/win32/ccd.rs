@@ -449,6 +449,18 @@ pub(crate) fn scaling_for(
     }
 }
 
+/// The path scaling a put-back writes for a recorded `exact` value (D-035): that value,
+/// except that IDENTITY, valid only when source and target sizes match, becomes PREFERRED
+/// when they differ, and CUSTOM is never written.
+pub(crate) fn exact_scaling_for(exact: Scaling, sizes_match: bool) -> DISPLAYCONFIG_SCALING {
+    match exact {
+        Scaling::Identity if !sizes_match => DISPLAYCONFIG_SCALING_PREFERRED,
+        // CUSTOM is for a hardware vendor's own app only ("DISPLAYCONFIG_SCALING").
+        Scaling::Custom => DISPLAYCONFIG_SCALING_PREFERRED,
+        other => DISPLAYCONFIG_SCALING(crate::display::modes::scaling_to_raw(other)),
+    }
+}
+
 /// The exact rate as Windows reports it; `None` for a zero denominator, which means "not
 /// specified".
 pub fn rational(value: DISPLAYCONFIG_RATIONAL) -> Option<Rational> {
@@ -558,6 +570,30 @@ mod tests {
             Denominator: 0,
         };
         assert_eq!(rational(unspecified), None);
+    }
+
+    #[test]
+    fn req_nv_25_put_back_writes_the_recorded_scaling_but_never_custom() {
+        assert_eq!(
+            exact_scaling_for(Scaling::AspectRatio, false),
+            DISPLAYCONFIG_SCALING(4)
+        );
+        assert_eq!(
+            exact_scaling_for(Scaling::Centered, false),
+            DISPLAYCONFIG_SCALING_CENTERED
+        );
+        assert_eq!(
+            exact_scaling_for(Scaling::Identity, false),
+            DISPLAYCONFIG_SCALING_PREFERRED
+        );
+        assert_eq!(
+            exact_scaling_for(Scaling::Identity, true),
+            DISPLAYCONFIG_SCALING_IDENTITY
+        );
+        assert_eq!(
+            exact_scaling_for(Scaling::Custom, false),
+            DISPLAYCONFIG_SCALING_PREFERRED
+        );
     }
 
     #[test]

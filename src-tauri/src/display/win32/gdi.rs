@@ -8,8 +8,9 @@ use windows::Win32::Graphics::Gdi::{
     DEVMODEW, DEVMODEW_0, DEVMODEW_0_1, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP,
     DISPLAY_DEVICE_MIRRORING_DRIVER, DISPLAY_DEVICE_PRIMARY_DEVICE, DISPLAY_DEVICEW, DM_BITSPERPEL,
     DM_DISPLAYFIXEDOUTPUT, DM_DISPLAYFLAGS, DM_DISPLAYFREQUENCY, DM_INTERLACED, DM_PELSHEIGHT,
-    DM_PELSWIDTH, DM_POSITION, DMDFO_STRETCH, ENUM_CURRENT_SETTINGS, ENUM_DISPLAY_SETTINGS_FLAGS,
-    ENUM_DISPLAY_SETTINGS_MODE, EnumDisplayDevicesW, EnumDisplaySettingsExW,
+    DM_PELSWIDTH, DM_POSITION, DMDFO_CENTER, DMDFO_STRETCH, ENUM_CURRENT_SETTINGS,
+    ENUM_DISPLAY_SETTINGS_FLAGS, ENUM_DISPLAY_SETTINGS_MODE, EnumDisplayDevicesW,
+    EnumDisplaySettingsExW,
 };
 use windows::Win32::UI::WindowsAndMessaging::EDD_GET_DEVICE_INTERFACE_NAME;
 use windows::core::{HSTRING, PCWSTR};
@@ -246,16 +247,32 @@ pub fn current_settings(device: &str) -> Option<GdiCurrent> {
     })
 }
 
+/// What a GDI call says about scaling: nothing (the bit clear, read as DMDFO_DEFAULT), or
+/// DM_DISPLAYFIXEDOUTPUT with DMDFO_STRETCH or DMDFO_CENTER.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FixedOutput {
+    Default,
+    Stretch,
+    Center,
+}
+
 /// The DEVMODEW for a test or an apply: only the size and the frequency of a listed entry,
-/// plus DM_DISPLAYFIXEDOUTPUT with DMDFO_STRETCH when `stretch` is set. Without it the bit
-/// stays clear and the member zero, as DEVMODEW requires. No position, so the desktop layout
-/// is not touched.
-pub(crate) fn build_devmode(entry: &GdiEntry, stretch: bool) -> DEVMODEW {
+/// plus DM_DISPLAYFIXEDOUTPUT with DMDFO_STRETCH or DMDFO_CENTER when `output` asks for one.
+/// Without it the bit stays clear and the member zero, as DEVMODEW requires. No position, so
+/// the desktop layout is not touched.
+pub(crate) fn build_devmode(entry: &GdiEntry, output: FixedOutput) -> DEVMODEW {
     let mut fields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
     let mut fixed_output = DEVMODE_DISPLAY_FIXED_OUTPUT(0);
-    if stretch {
-        fields |= DM_DISPLAYFIXEDOUTPUT;
-        fixed_output = DMDFO_STRETCH;
+    match output {
+        FixedOutput::Default => {}
+        FixedOutput::Stretch => {
+            fields |= DM_DISPLAYFIXEDOUTPUT;
+            fixed_output = DMDFO_STRETCH;
+        }
+        FixedOutput::Center => {
+            fields |= DM_DISPLAYFIXEDOUTPUT;
+            fixed_output = DMDFO_CENTER;
+        }
     }
     DEVMODEW {
         dmFields: fields,
@@ -323,20 +340,32 @@ pub(crate) fn apply(device: &str, mode: &DEVMODEW, flag: GdiFlag) -> Result<(), 
 }
 
 fn log_call(device: &str, mode: &DEVMODEW, flags: CDS_TYPE, code: i32) {
-    let stretch = mode.dmFields.contains(DM_DISPLAYFIXEDOUTPUT);
+    let output = if mode.dmFields.contains(DM_DISPLAYFIXEDOUTPUT) {
+        // SAFETY: build_devmode wrote the display view of the union, and DEVMODEW_0_1 is
+        // plain data, so this copy reads only bytes it set.
+        let display = unsafe { mode.Anonymous1.Anonymous2 };
+        fixed_output_name(display.dmDisplayFixedOutput)
+    } else {
+        "DMDFO_DEFAULT"
+    };
     log::info!(
         "ChangeDisplaySettingsExW({}) on {device} for {} x {} at {} Hz, {} returned {code} ({})",
         flags_text(flags),
         mode.dmPelsWidth,
         mode.dmPelsHeight,
         mode.dmDisplayFrequency,
-        if stretch {
-            "DMDFO_STRETCH"
-        } else {
-            "DMDFO_DEFAULT"
-        },
+        output,
         disp_change_name(code)
     );
+}
+
+/// The DMDFO name of a dmDisplayFixedOutput value, for the log.
+fn fixed_output_name(value: DEVMODE_DISPLAY_FIXED_OUTPUT) -> &'static str {
+    match value {
+        DMDFO_STRETCH => "DMDFO_STRETCH",
+        DMDFO_CENTER => "DMDFO_CENTER",
+        _ => "DMDFO_DEFAULT",
+    }
 }
 
 /// The DISP_CHANGE name of a return value, for the log and the detail.
@@ -415,7 +444,7 @@ mod tests {
 
     #[test]
     fn req_disp_17_built_mode_sets_size_and_rate_only() {
-        let mode = build_devmode(&entry(1440, 1080, 240), false);
+        let mode = build_devmode(&entry(1440, 1080, 240), FixedOutput::Default);
         assert_eq!(mode.dmSize as usize, size_of::<DEVMODEW>());
         assert_eq!(mode.dmDriverExtra, 0);
         assert_eq!(
@@ -435,7 +464,7 @@ mod tests {
 
     #[test]
     fn req_nv_25_built_mode_asks_for_stretch_with_dmdfo_stretch() {
-        let mode = build_devmode(&entry(1440, 1080, 240), true);
+        let mode = build_devmode(&entry(1440, 1080, 240), FixedOutput::Stretch);
         assert!(mode.dmFields.contains(DM_DISPLAYFIXEDOUTPUT));
         // SAFETY: build_devmode wrote the display view of the union.
         let display = unsafe { mode.Anonymous1.Anonymous2 };
@@ -443,6 +472,25 @@ mod tests {
         assert_eq!(display.dmDisplayFixedOutput.0, 1);
         assert_eq!(display.dmPosition.x, 0);
         assert_eq!(display.dmPosition.y, 0);
+    }
+
+    #[test]
+    fn req_nv_25_put_back_writes_dmdfo_center_for_a_centred_state() {
+        let mode = build_devmode(&entry(1440, 1080, 240), FixedOutput::Center);
+        assert!(mode.dmFields.contains(DM_DISPLAYFIXEDOUTPUT));
+        // SAFETY: build_devmode wrote the display view of the union.
+        let display = unsafe { mode.Anonymous1.Anonymous2 };
+        // DMDFO_CENTER is 2 in wingdi.h.
+        assert_eq!(display.dmDisplayFixedOutput.0, 2);
+        assert_eq!(
+            fixed_output_name(display.dmDisplayFixedOutput),
+            "DMDFO_CENTER"
+        );
+        assert_eq!(fixed_output_name(DMDFO_STRETCH), "DMDFO_STRETCH");
+        assert_eq!(
+            fixed_output_name(DEVMODE_DISPLAY_FIXED_OUTPUT(0)),
+            "DMDFO_DEFAULT"
+        );
     }
 
     #[test]

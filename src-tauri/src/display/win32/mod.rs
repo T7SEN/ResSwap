@@ -25,7 +25,7 @@ use crate::apply::Ticket;
 use crate::apply::journal::LayoutRecord;
 use crate::display::modes::{GdiMode, modes_from_gdi, rational_eq, within_one_hz};
 use crate::display::monitors::match_monitor;
-use crate::display::types::{MonitorId, ScalingChoice};
+use crate::display::types::{MonitorId, Scaling, ScalingChoice};
 use crate::display::win32::ccd::{CcdConfig, PreferredMode, TargetName};
 use crate::display::win32::gdi::{GdiAdapter, GdiEntry};
 use crate::display::win32::hw::{ScalingControl, hw_choice};
@@ -438,6 +438,24 @@ struct GdiPlan {
     mode: DEVMODEW,
 }
 
+/// The DM_DISPLAYFIXEDOUTPUT value a GDI call sends. Only the GDI scaling control writes one.
+/// A put-back of a recorded state writes STRETCH or CENTER when that was the recorded path
+/// scaling, and leaves the bit clear otherwise, because GDI has no value for the rest: the
+/// read-back then checks what Windows chose (D-030). A player's full-screen request writes
+/// STRETCH ("Scaling the desktop image", legacy ChangeDisplaySettingsEx table).
+fn fixed_output_for(target: &TargetConfig, scaling: ScalingControl) -> gdi::FixedOutput {
+    if scaling != ScalingControl::Gdi {
+        return gdi::FixedOutput::Default;
+    }
+    match target.exact_scaling {
+        Some(Scaling::Stretched) => gdi::FixedOutput::Stretch,
+        Some(Scaling::Centered) => gdi::FixedOutput::Center,
+        Some(_) => gdi::FixedOutput::Default,
+        None if target.scaling == ScalingChoice::FullScreen => gdi::FixedOutput::Stretch,
+        None => gdi::FixedOutput::Default,
+    }
+}
+
 /// The GDI device of the target's live path and the DEVMODEW for the listed entry of that
 /// size whose integer rate matches the requested rational (REQ-DISP-17).
 fn plan_gdi(target: &TargetConfig, scaling: ScalingControl) -> Result<GdiPlan, AppError> {
@@ -477,10 +495,9 @@ fn plan_gdi(target: &TargetConfig, scaling: ScalingControl) -> Result<GdiPlan, A
         frequency,
         ..sized[0]
     };
-    let stretch = target.scaling == ScalingChoice::FullScreen && scaling == ScalingControl::Gdi;
     Ok(GdiPlan {
         device,
-        mode: gdi::build_devmode(&entry, stretch),
+        mode: gdi::build_devmode(&entry, fixed_output_for(target, scaling)),
     })
 }
 
@@ -533,8 +550,10 @@ fn plan_ccd(targets: &[TargetConfig]) -> Result<CcdConfig, AppError> {
             },
         );
         if let Some(path) = config.paths.get_mut(index) {
-            path.targetInfo.scaling =
-                ccd::scaling_for(target.scaling, path.targetInfo.scaling, sizes_match);
+            path.targetInfo.scaling = match target.exact_scaling {
+                Some(exact) => ccd::exact_scaling_for(exact, sizes_match),
+                None => ccd::scaling_for(target.scaling, path.targetInfo.scaling, sizes_match),
+            };
         }
     }
     Ok(config)

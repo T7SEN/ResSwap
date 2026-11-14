@@ -136,6 +136,9 @@ pub struct TargetConfig {
     pub monitor: MonitorId,
     pub mode: RawMode,
     pub scaling: ScalingChoice,
+    /// The exact path scaling a put-back of a recorded state writes instead of `scaling`, as
+    /// far as the route can express it (D-035); `None` for a player's request.
+    pub exact_scaling: Option<Scaling>,
 }
 
 /// A display configuration to test or apply. The layout fields join it with the
