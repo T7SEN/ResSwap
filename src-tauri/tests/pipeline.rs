@@ -608,6 +608,35 @@ fn req_safe_03_another_monitor_waits_for_the_pending_change() {
     assert_eq!(current(&fakes, &samsung), Some(raw(1280, 1024, 60)));
 }
 
+/// Both monitors of the test PC with their devices disabled in Device Manager report no
+/// device path (REQ-DISP-26): the LG is applied, kept and restored by its EDID ids and
+/// connector instance, and the Samsung beside it is never touched.
+#[test]
+fn req_disp_26_monitors_without_a_device_path_apply_and_restore() {
+    let (core, fakes) = fake_core(FixtureProfile::TwoMonitors);
+    let lg = lg(FixtureProfile::TwoMonitors);
+    let samsung = known_monitors(FixtureProfile::TwoMonitors).remove(2).id;
+    assert!(lg.device_path.is_empty() && samsung.device_path.is_empty());
+    let id = pending_id(&apply(&core, request(&lg, stretched())).unwrap());
+    assert!(matches!(keep(&core, &id), ConfirmOutcome::Kept { .. }));
+    assert_eq!(current(&fakes, &lg), Some(stretched()));
+    assert_eq!(current(&fakes, &samsung), Some(raw(1920, 1080, 60)));
+    block_on(core.restore_native(
+        RestoreNativeRequest {
+            monitor: Some(lg.clone()),
+        },
+        ChangeSource::Window,
+    ))
+    .unwrap();
+    assert_eq!(current(&fakes, &lg), Some(native()));
+    assert_eq!(current(&fakes, &samsung), Some(raw(1920, 1080, 60)));
+    // The Samsung's own change leaves the LG alone.
+    let id = pending_id(&apply(&core, request(&samsung, raw(1280, 1024, 60))).unwrap());
+    assert!(matches!(keep(&core, &id), ConfirmOutcome::Kept { .. }));
+    assert_eq!(current(&fakes, &samsung), Some(raw(1280, 1024, 60)));
+    assert_eq!(current(&fakes, &lg), Some(native()));
+}
+
 /// journal.json refuses the next write once, at the rename.
 fn refuse_next_journal_write(fakes: &Fakes) {
     fakes.store.script(
@@ -1271,10 +1300,13 @@ fn req_sec_08_requests_are_checked_before_anything_runs() {
         .unwrap_err();
         assert_eq!(error.code(), ErrorCode::Internal);
     }
-    let mut empty = lg_id();
-    empty.device_path = String::new();
+    // No device path and no EDID ids: nothing names a monitor (REQ-DISP-26).
+    let mut nameless = lg_id();
+    nameless.device_path = String::new();
+    nameless.edid_manufacturer_id = None;
+    nameless.edid_product_code = None;
     assert_eq!(
-        apply(&core, request(&empty, stretched()))
+        apply(&core, request(&nameless, stretched()))
             .unwrap_err()
             .code(),
         ErrorCode::Internal
@@ -1911,4 +1943,316 @@ fn req_disp_25_diagnostics_are_read_only() {
     core.set_log_folder(None, true);
     let overridden = block_on(core.diagnostics()).unwrap();
     assert_eq!(overridden.settings_folder, "%RESSWAP_DATA_DIR%");
+}
+
+/// A debug build on the Win32 backend kind closes an unfinished entry whose monitor already
+/// shows its baseline, as when Windows put a CDS_FULLSCREEN mode back on exit, and reports
+/// nothing: no changing call, recovery clean, no raised error (D-033, REQ-SAFE-07).
+#[test]
+fn req_safe_07_debug_build_closes_entries_windows_already_put_back() {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let fakes = Fakes::new(FixtureProfile::TestPc);
+    fakes.store.put(JOURNAL_FILE, OPEN_CHANGE.as_bytes());
+    let mut backends = fakes.backends();
+    backends.kind = BackendKind::Real;
+    let core = Core::new(backends);
+    block_on(core.recover_at_start());
+    assert!(!fakes.display.applied_anything());
+    let state = core.snapshot();
+    assert_eq!(state.recovery.status, RecoveryStatus::Clean);
+    assert!(state.errors.is_empty());
+    assert!(journal(&fakes).changes.is_empty());
+    assert_eq!(current(&fakes, &lg_id()), Some(native()));
+}
+
+/// Once Restore everything leaves nothing changed, the RECOVERY_INCOMPLETE raised at start
+/// leaves the error list with the recovery state (D-034).
+#[test]
+fn req_disp_22_clean_restore_clears_the_raised_recovery_error() {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let fakes = Fakes::new(FixtureProfile::TestPc);
+    fakes.store.put(JOURNAL_FILE, OPEN_CHANGE.as_bytes());
+    fakes.display.change_from_outside(
+        &lg_id(),
+        stretched(),
+        Scaling::Stretched,
+        OutsideChange::Temporary,
+    );
+    let mut backends = fakes.backends();
+    backends.kind = BackendKind::Real;
+    let core = Core::new(backends);
+    block_on(core.recover_at_start());
+    assert_eq!(
+        core.snapshot().errors[0].error.code,
+        ErrorCode::RecoveryIncomplete
+    );
+    block_on(core.restore_everything(ChangeSource::Window)).unwrap();
+    let state = core.snapshot();
+    assert_eq!(state.recovery.status, RecoveryStatus::Clean);
+    assert!(
+        state
+            .errors
+            .iter()
+            .all(|raised| raised.error.code != ErrorCode::RecoveryIncomplete)
+    );
+    assert_eq!(current(&fakes, &lg_id()), Some(native()));
+}
+
+/// The apply call works, then the read after it no longer lists the monitor: MONITOR_GONE,
+/// never MODE_REJECTED, and the entry stays for when the monitor returns (REQ-SAFE-09).
+#[test]
+fn req_safe_09_monitor_gone_after_the_apply_call_keeps_the_entry() {
+    let (core, fakes) = fake_core(FixtureProfile::TestPc);
+    fakes
+        .display
+        .script(DisplayFault::UnplugAfterApply, When::Once);
+    let error = apply(&core, request(&lg_id(), stretched())).unwrap_err();
+    assert_eq!(error.code(), ErrorCode::MonitorGone);
+    assert_eq!(journal(&fakes).changes.len(), 1);
+    assert!(core.snapshot().pending.is_none());
+    // The window no longer lists it, and the change goes back when the monitor returns.
+    assert!(
+        core.snapshot()
+            .monitors
+            .iter()
+            .all(|monitor| monitor.id != lg_id())
+    );
+    assert!(fakes.display.plug(&lg_id()));
+    block_on(core.on_system_event(SystemEvent::DisplayChanged));
+    assert_eq!(current(&fakes, &lg_id()), Some(native()));
+    assert!(journal(&fakes).changes.is_empty());
+}
+
+/// Closing the keep-mode window while journal.json refuses every write raises the error once:
+/// the countdown's own failed try at its end does not raise it again (D-029).
+#[test]
+fn req_safe_05_keep_window_closed_failure_is_raised_once() {
+    let (core, fakes, _recorder, _window) = watched_core(FixtureProfile::TestPc);
+    pending_id(&apply(&core, request(&lg_id(), stretched())).unwrap());
+    fakes.store.script(
+        StoreFault::Write(StoreFile::Journal, WriteStage::Rename),
+        When::Always,
+    );
+    core.keep_window_closed();
+    assert!(wait_for(|| !core.snapshot().errors.is_empty()));
+    fakes.clock.advance(10_000);
+    block_on(core.run_due_timers());
+    let state = core.snapshot();
+    let raised: Vec<_> = state
+        .errors
+        .iter()
+        .filter(|raised| raised.error.code == ErrorCode::JournalWriteFailed)
+        .collect();
+    assert_eq!(raised.len(), 1);
+    assert_eq!(raised[0].count, 1);
+    assert!(state.pending.is_some());
+}
+
+/// On the GDI route a revert to a centred state sends DMDFO_CENTER, so the put-back verifies
+/// instead of leaving the stretch of the pending change (D-035).
+#[test]
+fn req_safe_17_gdi_put_back_writes_a_centred_scaling() {
+    let (core, fakes) = fake_core(FixtureProfile::TestPc);
+    let kept = raw(1024, 768, 240);
+    fakes
+        .display
+        .change_from_outside(&lg_id(), kept, Scaling::Centered, OutsideChange::Temporary);
+    let id = pending_id(&apply(&core, request(&lg_id(), stretched())).unwrap());
+    let reverted = block_on(core.revert(change(&id), RevertReason::Player)).unwrap();
+    assert!(matches!(reverted, RevertOutcome::Reverted { .. }));
+    let live = fakes.display.monitor(&lg_id()).unwrap();
+    assert_eq!(live.current, Some(kept));
+    assert_eq!(live.scaling, Scaling::Centered);
+}
+
+/// The GDI route has no value for an aspect-ratio state, so Windows picks and the put-back
+/// reads back the stretch: RECOVERY_INCOMPLETE, never a revert reported as done; the CCD route
+/// writes the recorded value and verifies (D-030, D-035).
+#[test]
+fn req_safe_17_put_back_scaling_follows_the_route() {
+    for (route, verifies) in [
+        (RouteChoice::gdi(GdiFlag::Fullscreen), false),
+        (RouteChoice::ccd(), true),
+    ] {
+        let (core, fakes) = fake_core(FixtureProfile::TestPc);
+        fakes.display.set_route(route);
+        let kept = raw(1024, 768, 240);
+        fakes.display.change_from_outside(
+            &lg_id(),
+            kept,
+            Scaling::AspectRatio,
+            OutsideChange::Temporary,
+        );
+        let id = pending_id(&apply(&core, request(&lg_id(), stretched())).unwrap());
+        let answer = block_on(core.revert(change(&id), RevertReason::Player));
+        let live = fakes.display.monitor(&lg_id()).unwrap();
+        assert_eq!(live.current, Some(kept), "{route:?}");
+        if verifies {
+            assert!(matches!(answer.unwrap(), RevertOutcome::Reverted { .. }));
+            assert_eq!(live.scaling, Scaling::AspectRatio);
+        } else {
+            assert_eq!(answer.unwrap_err().code(), ErrorCode::RecoveryIncomplete);
+            assert_eq!(live.scaling, Scaling::Stretched);
+        }
+    }
+}
+
+/// A debug build on the Win32 backend kind leaves a journaled monitor that is not connected
+/// at start for Restore everything: it is not marked missing, so its return puts nothing back
+/// by itself (D-033).
+#[test]
+fn req_safe_07_debug_build_does_not_restore_a_monitor_that_returns() {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let fakes = Fakes::new(FixtureProfile::TestPc);
+    fakes.store.put(JOURNAL_FILE, OPEN_CHANGE.as_bytes());
+    fakes.display.change_from_outside(
+        &lg_id(),
+        stretched(),
+        Scaling::Stretched,
+        OutsideChange::Temporary,
+    );
+    assert!(fakes.display.unplug(&lg_id()));
+    let mut backends = fakes.backends();
+    backends.kind = BackendKind::Real;
+    let core = Core::new(backends);
+    block_on(core.recover_at_start());
+    assert_eq!(core.snapshot().recovery.status, RecoveryStatus::Incomplete);
+    assert!(fakes.display.plug(&lg_id()));
+    block_on(core.on_system_event(SystemEvent::DisplayChanged));
+    assert!(!fakes.display.applied_anything());
+    assert_eq!(current(&fakes, &lg_id()), Some(stretched()));
+    assert_eq!(journal(&fakes).changes.len(), 1);
+}
+
+/// A debug build closes an entry whose monitor was changed outside ResSwap and reports
+/// nothing for it, as a release build does (D-033).
+#[test]
+fn req_safe_07_debug_build_closes_a_monitor_changed_outside() {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let fakes = Fakes::new(FixtureProfile::TestPc);
+    fakes.store.put(JOURNAL_FILE, OPEN_CHANGE.as_bytes());
+    let outside = raw(800, 600, 240);
+    fakes.display.change_from_outside(
+        &lg_id(),
+        outside,
+        Scaling::Stretched,
+        OutsideChange::Temporary,
+    );
+    let mut backends = fakes.backends();
+    backends.kind = BackendKind::Real;
+    let core = Core::new(backends);
+    block_on(core.recover_at_start());
+    let state = core.snapshot();
+    assert_eq!(state.recovery.status, RecoveryStatus::Clean);
+    assert!(state.errors.is_empty());
+    assert!(journal(&fakes).changes.is_empty());
+    assert!(!fakes.display.applied_anything());
+    assert_eq!(current(&fakes, &lg_id()), Some(outside));
+}
+
+/// A RECOVERY_INCOMPLETE raised by a revert that could not put the mode back leaves the list
+/// once a Restore everything leaves nothing changed, whatever raised it (D-034).
+#[test]
+fn req_disp_22_clean_restore_clears_a_recovery_error_raised_later() {
+    let (core, fakes, _recorder, _window) = watched_core(FixtureProfile::TestPc);
+    pending_id(&apply(&core, request(&lg_id(), stretched())).unwrap());
+    fakes
+        .display
+        .script(DisplayFault::ApplyFails(-1), When::Once);
+    fakes.clock.advance(10_000);
+    block_on(core.run_due_timers());
+    assert!(
+        core.snapshot()
+            .errors
+            .iter()
+            .any(|raised| raised.error.code == ErrorCode::RecoveryIncomplete)
+    );
+    block_on(core.restore_everything(ChangeSource::Window)).unwrap();
+    assert!(
+        core.snapshot()
+            .errors
+            .iter()
+            .all(|raised| raised.error.code != ErrorCode::RecoveryIncomplete)
+    );
+    assert_eq!(current(&fakes, &lg_id()), Some(native()));
+}
+
+/// While a moved-aside journal waits for its fallback, a Restore everything that puts every
+/// listed change back leaves recovery incomplete; the next one runs the fallback and ends it
+/// (D-023, D-036).
+#[test]
+fn req_safe_06_lost_journal_keeps_recovery_incomplete_until_its_fallback() {
+    let fakes = Fakes::new(FixtureProfile::TestPc);
+    fakes.store.put(JOURNAL_FILE, b"not a journal");
+    let core = Core::new(fakes.backends());
+    block_on(core.recover_at_start());
+    assert_eq!(core.snapshot().recovery.status, RecoveryStatus::Incomplete);
+    keep(
+        &core,
+        &pending_id(&apply(&core, request(&lg_id(), stretched())).unwrap()),
+    );
+    block_on(core.restore_everything(ChangeSource::Window)).unwrap();
+    assert_eq!(core.snapshot().recovery.status, RecoveryStatus::Incomplete);
+    assert!(
+        !fakes
+            .display
+            .calls()
+            .iter()
+            .any(|call| matches!(call, DisplayCall::ApplyDatabaseCurrent { .. }))
+    );
+    block_on(core.restore_everything(ChangeSource::Window)).unwrap();
+    assert!(
+        fakes
+            .display
+            .calls()
+            .iter()
+            .any(|call| matches!(call, DisplayCall::ApplyDatabaseCurrent { .. }))
+    );
+    assert_eq!(core.snapshot().recovery.status, RecoveryStatus::Clean);
+}
+
+/// When recovery closes one monitor's entry because it was changed outside ResSwap while
+/// another monitor still has an open change, the saved snapshot is dropped, so a later
+/// Restore everything puts back only the listed monitor and never undoes the outside change
+/// (D-036, REQ-WATCH-07).
+#[test]
+fn req_disp_22_restore_everything_leaves_a_monitor_changed_outside() {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let fakes = Fakes::new(FixtureProfile::TwoMonitors);
+    let lg = lg(FixtureProfile::TwoMonitors);
+    let samsung = known_monitors(FixtureProfile::TwoMonitors).remove(2).id;
+    {
+        let first = Core::new(fakes.backends());
+        keep(
+            &first,
+            &pending_id(&apply(&first, request(&lg, stretched())).unwrap()),
+        );
+        keep(
+            &first,
+            &pending_id(&apply(&first, request(&samsung, raw(1280, 1024, 60))).unwrap()),
+        );
+    }
+    assert!(journal(&fakes).layout.is_some());
+    let outside = raw(800, 600, 240);
+    fakes
+        .display
+        .change_from_outside(&lg, outside, Scaling::Stretched, OutsideChange::Temporary);
+    let mut backends = fakes.backends();
+    backends.kind = BackendKind::Real;
+    let core = Core::new(backends);
+    block_on(core.recover_at_start());
+    assert!(journal(&fakes).layout.is_none());
+    block_on(core.restore_everything(ChangeSource::Window)).unwrap();
+    assert_eq!(current(&fakes, &lg), Some(outside));
+    assert_eq!(current(&fakes, &samsung), Some(raw(1920, 1080, 60)));
 }

@@ -5,10 +5,10 @@
     "checkForUpdates": false,
     "showHiddenMonitors": true,
     "selectedMonitor": {
-      "devicePath": "fake-device-path:test-pc:lg-ultragear",
-      "edidManufacturerId": 7789,
+      "devicePath": "",
+      "edidManufacturerId": 27934,
       "edidProductCode": 23438,
-      "connectorInstance": 0
+      "connectorInstance": 1
     },
     "playStretchedProfile": "0f8fad5b-d9cb-469f-a165-70867728950e",
     "startWithWindows": false,
@@ -21,10 +21,10 @@
     "confirmedModes": [
       {
         "monitor": {
-          "devicePath": "fake-device-path:test-pc:lg-ultragear",
-          "edidManufacturerId": 7789,
+          "devicePath": "",
+          "edidManufacturerId": 27934,
           "edidProductCode": 23438,
-          "connectorInstance": 0
+          "connectorInstance": 1
         },
         "mode": {
           "width": 1280,
@@ -45,10 +45,10 @@
       "name": "Example",
       "exe": "game.exe",
       "monitor": {
-        "devicePath": "fake-device-path:test-pc:lg-ultragear",
-        "edidManufacturerId": 7789,
+        "devicePath": "",
+        "edidManufacturerId": 27934,
         "edidProductCode": 23438,
-        "connectorInstance": 0
+        "connectorInstance": 1
       },
       "mode": {
         "width": 1280,

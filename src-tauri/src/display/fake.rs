@@ -14,11 +14,11 @@ use crate::apply::journal::{
 };
 use crate::apply::{OpenEntries, Ticket};
 use crate::display::modes::{same_mode, scaling_from_raw, scaling_to_raw};
-use crate::display::monitors::match_monitor;
+use crate::display::monitors::{match_monitor, same_monitor};
 use crate::display::types::{MonitorId, Scaling, ScalingChoice};
 use crate::display::{
     DisplayBackend, DisplayConfig, GdiFlag, Rational, RawMode, RawMonitor, Route, RouteChoice,
-    SnapshotRestore,
+    SnapshotRestore, TargetConfig,
 };
 use crate::error::{AppError, ErrorContext, Failure};
 
@@ -41,7 +41,8 @@ const PATH_ACTIVE: u32 = 1;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FixtureProfile {
     /// T7SEN's PC as recorded on 11 Nov 2026: the LG on the RTX 4060 Ti, the Parsec virtual
-    /// display, and the Samsung known to Windows but not connected.
+    /// display, and the Samsung known to Windows but not connected. The two real monitors
+    /// carry the identities read on 14 Nov 2026 with their devices disabled: no device path.
     #[default]
     TestPc,
     /// One monitor on an adapter that is not NVIDIA.
@@ -374,7 +375,7 @@ impl FakeDisplay {
     pub fn monitor(&self, id: &MonitorId) -> Option<RawMonitor> {
         lock(&self.targets)
             .iter()
-            .find(|target| target.monitor.id == *id)
+            .find(|target| same_target(target, id))
             .map(|target| target.monitor.clone())
     }
 
@@ -386,7 +387,7 @@ impl FakeDisplay {
         let mut targets = lock(&self.targets);
         let Some(target) = targets
             .iter_mut()
-            .find(|target| target.available && target.monitor.id == *id)
+            .find(|target| target.available && same_target(target, id))
         else {
             return false;
         };
@@ -401,7 +402,7 @@ impl FakeDisplay {
         let mut targets = lock(&self.targets);
         let Some(target) = targets
             .iter_mut()
-            .find(|target| !target.available && target.monitor.id == *id)
+            .find(|target| !target.available && same_target(target, id))
         else {
             return false;
         };
@@ -429,7 +430,7 @@ impl FakeDisplay {
         let mut targets = lock(&self.targets);
         let Some(target) = targets
             .iter_mut()
-            .find(|target| target.available && target.monitor.id == *id)
+            .find(|target| target.available && same_target(target, id))
         else {
             return false;
         };
@@ -447,7 +448,7 @@ impl FakeDisplay {
     /// monitor with this identity.
     pub fn edit_monitor(&self, id: &MonitorId, edit: impl FnOnce(&mut RawMonitor)) -> bool {
         let mut targets = lock(&self.targets);
-        let Some(target) = targets.iter_mut().find(|target| target.monitor.id == *id) else {
+        let Some(target) = targets.iter_mut().find(|target| same_target(target, id)) else {
             return false;
         };
         edit(&mut target.monitor);
@@ -617,7 +618,7 @@ impl DisplayBackend for FakeDisplay {
         for target in &config.targets {
             let Some(found) = targets
                 .iter_mut()
-                .find(|known| known.available && known.monitor.id == target.monitor)
+                .find(|known| known.available && same_target(known, &target.monitor))
             else {
                 continue;
             };
@@ -633,7 +634,7 @@ impl DisplayBackend for FakeDisplay {
                 },
                 _ => target.mode,
             };
-            found.monitor.scaling = scaling_after(&found.monitor, set, target.scaling, fault);
+            found.monitor.scaling = scaling_after(&found.monitor, set, target, route, fault);
             found.monitor.current = Some(set);
             if fault == Some(DisplayFault::UnplugAfterApply) {
                 found.available = false;
@@ -810,7 +811,7 @@ impl DisplayBackend for FakeDisplay {
             }
             if let Some(target) = targets
                 .iter_mut()
-                .find(|known| known.available && known.monitor.id == *found)
+                .find(|known| known.available && same_target(known, found))
             {
                 target.monitor.current = Some(RawMode {
                     width: source.width,
@@ -850,7 +851,14 @@ fn target_of(snapshot: &LayoutRecord, index: u32) -> Option<TargetModeRecord> {
 fn find<'a>(targets: &'a [FakeTarget], id: &MonitorId) -> Option<&'a FakeTarget> {
     targets
         .iter()
-        .find(|target| target.available && target.monitor.id == *id)
+        .find(|target| target.available && same_target(target, id))
+}
+
+/// Whether a fixture target is the monitor `id` names, by the identity rule the core uses
+/// (REQ-DISP-20): the same non-empty device path, else the same EDID ids and connector
+/// instance. The fixture never holds two targets that rule cannot tell apart.
+fn same_target(target: &FakeTarget, id: &MonitorId) -> bool {
+    same_monitor(&target.monitor.id, id)
 }
 
 fn gone() -> AppError {
@@ -865,7 +873,8 @@ fn gone() -> AppError {
 fn scaling_after(
     monitor: &RawMonitor,
     set: RawMode,
-    choice: ScalingChoice,
+    target: &TargetConfig,
+    route: RouteChoice,
     fault: Option<DisplayFault>,
 ) -> Scaling {
     let native_size = monitor
@@ -877,7 +886,16 @@ fn scaling_after(
     if let Some(DisplayFault::ApplyIgnoresScaling(read_back)) = fault {
         return read_back;
     }
-    match choice {
+    // A put-back writes the recorded scaling as far as the route can (D-035): the CCD route
+    // writes it, CUSTOM as PREFERRED; the GDI route has a value only for STRETCH and CENTER
+    // and otherwise leaves the choice to Windows, modelled by the Keep arm below.
+    match (target.exact_scaling, route.route) {
+        (Some(Scaling::Custom), Route::Ccd) => return Scaling::Preferred,
+        (Some(exact), Route::Ccd) => return exact,
+        (Some(exact @ (Scaling::Stretched | Scaling::Centered)), Route::Gdi) => return exact,
+        _ => {}
+    }
+    match target.scaling {
         ScalingChoice::FullScreen => Scaling::Stretched,
         // Synthetic: identity cannot hold once the sizes differ, so the fake reads back the
         // aspect-ratio default that Windows 7 features give the adapter.
@@ -911,12 +929,14 @@ fn lg_ultragear() -> RawMonitor {
         modes.push(mode(width, height, 60));
     }
     RawMonitor {
+        // As resswap-diag read it on the test PC on 14 Nov 2026 with the monitor device
+        // disabled in Device Manager, the player's setup there: no device path, so the
+        // identity is the EDID ids plus the connector instance (REQ-DISP-20, REQ-DISP-26).
         id: MonitorId {
-            // Synthetic device path and EDID ids until HW-P1-01 records the real ones.
-            device_path: String::from("fake-device-path:test-pc:lg-ultragear"),
-            edid_manufacturer_id: Some(0x1E6D),
+            device_path: String::new(),
+            edid_manufacturer_id: Some(0x6D1E),
             edid_product_code: Some(0x5B8E),
-            connector_instance: 0,
+            connector_instance: 1,
         },
         name: Some(String::from("LG ULTRAGEAR")),
         adapter_name: String::from("NVIDIA GeForce RTX 4060 Ti"),
@@ -968,15 +988,16 @@ fn parsec_virtual_display() -> RawMonitor {
     }
 }
 
-/// The Samsung LF24T35 on the RTX 4060 Ti. Every value but the name is synthetic until the
-/// HW-P6 round.
+/// The Samsung LF24T35 on the RTX 4060 Ti. The identity is as resswap-diag read it on 14 Nov
+/// 2026 with the monitor device disabled; every other value but the name is synthetic until
+/// the HW-P6 round.
 fn samsung_lf24t35(connected: bool) -> RawMonitor {
     RawMonitor {
         id: MonitorId {
-            device_path: String::from("fake-device-path:test-pc:samsung-lf24t35"),
-            edid_manufacturer_id: None,
-            edid_product_code: None,
-            connector_instance: 1,
+            device_path: String::new(),
+            edid_manufacturer_id: Some(0x2D4C),
+            edid_product_code: Some(0x707D),
+            connector_instance: 0,
         },
         name: Some(String::from("Samsung LF24T35")),
         adapter_name: String::from("NVIDIA GeForce RTX 4060 Ti"),
@@ -1080,6 +1101,7 @@ mod tests {
                 monitor: monitor.clone(),
                 mode: set,
                 scaling: ScalingChoice::FullScreen,
+                exact_scaling: None,
             }],
         }
     }
@@ -1559,8 +1581,16 @@ mod tests {
                 .modes
                 .contains(&mode(1440, 1080, 240))
         );
+        // The LG on another device path is still the LG (REQ-DISP-20).
+        let moved = MonitorId {
+            device_path: String::from("another-device-path"),
+            ..lg.clone()
+        };
+        assert!(display.monitor(&moved).is_some());
         let stranger = MonitorId {
             device_path: String::from("no-such-monitor"),
+            edid_manufacturer_id: Some(0x0001),
+            edid_product_code: Some(0x0002),
             ..lg
         };
         assert!(!display.edit_monitor(&stranger, |_| {}));

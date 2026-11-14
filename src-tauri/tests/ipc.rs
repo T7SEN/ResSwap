@@ -57,10 +57,10 @@ fn code(answer: &Result<Value, Value>) -> Option<&str> {
 
 fn monitor_id() -> Value {
     json!({
-        "devicePath": "fake-device-path:test-pc:lg-ultragear",
-        "edidManufacturerId": 7789,
+        "devicePath": "",
+        "edidManufacturerId": 27934,
         "edidProductCode": 23438,
-        "connectorInstance": 0
+        "connectorInstance": 1
     })
 }
 

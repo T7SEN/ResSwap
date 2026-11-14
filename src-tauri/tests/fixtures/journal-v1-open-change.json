@@ -4,10 +4,10 @@
   "monitors": [
     {
       "identity": {
-        "devicePath": "fake-device-path:test-pc:lg-ultragear",
-        "edidManufacturerId": 7789,
+        "devicePath": "",
+        "edidManufacturerId": 27934,
         "edidProductCode": 23438,
-        "connectorInstance": 0
+        "connectorInstance": 1
       },
       "adapterDevicePath": "fake-adapter-path:test-pc:rtx-4060-ti",
       "gdiNameHint": "\\\\.\\DISPLAY1",
@@ -32,10 +32,10 @@
       "changeId": "5f0e3c1a-8b2d-4e6f-9a1b-2c3d4e5f6a7b",
       "kind": "mode",
       "monitor": {
-        "devicePath": "fake-device-path:test-pc:lg-ultragear",
-        "edidManufacturerId": 7789,
+        "devicePath": "",
+        "edidManufacturerId": 27934,
         "edidProductCode": 23438,
-        "connectorInstance": 0
+        "connectorInstance": 1
       },
       "previous": {
         "width": 1920,

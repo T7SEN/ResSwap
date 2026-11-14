@@ -1160,10 +1160,10 @@ mod tests {
 
     fn lg() -> MonitorId {
         MonitorId {
-            device_path: String::from("fake-device-path:test-pc:lg-ultragear"),
-            edid_manufacturer_id: Some(0x1E6D),
+            device_path: String::new(),
+            edid_manufacturer_id: Some(0x6D1E),
             edid_product_code: Some(0x5B8E),
-            connector_instance: 0,
+            connector_instance: 1,
         }
     }
 

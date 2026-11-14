@@ -455,10 +455,10 @@ mod tests {
 
     fn monitor() -> MonitorId {
         MonitorId {
-            device_path: String::from("fake-device-path:test-pc:lg-ultragear"),
-            edid_manufacturer_id: Some(0x1E6D),
+            device_path: String::new(),
+            edid_manufacturer_id: Some(0x6D1E),
             edid_product_code: Some(0x5B8E),
-            connector_instance: 0,
+            connector_instance: 1,
         }
     }
 
@@ -939,7 +939,7 @@ mod tests {
         };
         assert!(settings.is_confirmed(&moved, &stretched()));
         let other_connector = MonitorId {
-            connector_instance: 1,
+            connector_instance: monitor().connector_instance + 1,
             ..moved.clone()
         };
         assert!(!settings.is_confirmed(&other_connector, &stretched()));
