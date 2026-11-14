@@ -5,17 +5,35 @@ import type { JournalItem } from '../types/JournalItem';
 import type { Mode } from '../types/Mode';
 import type { Monitor } from '../types/Monitor';
 import type { MonitorId } from '../types/MonitorId';
+import type { PendingChange } from '../types/PendingChange';
 import type { Preset } from '../types/Preset';
 import type { Profile } from '../types/Profile';
 import type { RefreshRate } from '../types/RefreshRate';
+import type { Scaling } from '../types/Scaling';
 import type { Settings } from '../types/Settings';
 
 /** One fixed time for every timestamp, so screenshots match from run to run. */
 export const FIXTURE_TIME_MS = Date.UTC(2026, 10, 12, 8, 0, 0);
 
+/** Hertz with at most two decimals and no trailing zeros, as the core labels a rate. */
+export function rateLabel(numerator: number, denominator: number): string {
+  const hz = (numerator / denominator).toFixed(2).replace(/\.?0+$/, '');
+  return `${hz} Hz`;
+}
+
 /** A whole-hertz rate, n / 1, labelled the way the core labels it. */
 export function rate(hz: number): RefreshRate {
-  return { numerator: hz, denominator: 1, label: `${String(hz)} Hz` };
+  return { numerator: hz, denominator: 1, label: rateLabel(hz, 1) };
+}
+
+/** True when two rates are the same rational, compared without division (REQ-DISP-17). */
+export function sameRate(a: RefreshRate, b: RefreshRate): boolean {
+  return a.numerator * b.denominator === b.numerator * a.denominator;
+}
+
+/** True when two modes have the same size and the same rate. Labels are not compared. */
+export function sameMode(a: Mode, b: Mode): boolean {
+  return a.width === b.width && a.height === b.height && sameRate(a.refresh, b.refresh);
 }
 
 /** A mode labelled the way the core labels it, for example "1280 x 960 at 240 Hz". */
@@ -72,7 +90,10 @@ export const VIRTUAL_ID: MonitorId = {
 export const NVIDIA_ADAPTER = 'NVIDIA GeForce RTX 4060 Ti';
 
 /** 1920 x 1080 native at the test PC's rates, and the same extra sizes the fake backend lists. */
-export function primaryMonitor(current: Mode = mode(1920, 1080, 240)): Monitor {
+export function primaryMonitor(
+  current: Mode = mode(1920, 1080, 240),
+  extraModes: readonly Mode[] = [],
+): Monitor {
   const native = mode(1920, 1080, 240);
   const modes: Mode[] = [240, 144, 120, 100, 75, 60, 48].map((hz) => mode(1920, 1080, hz));
   modes.push(mode(1280, 882, 240));
@@ -84,6 +105,7 @@ export function primaryMonitor(current: Mode = mode(1920, 1080, 240)): Monitor {
   ] as const) {
     modes.push(mode(width, height, 240), mode(width, height, 60));
   }
+  modes.push(...extraModes);
   return {
     id: PRIMARY_ID,
     name: 'Primary monitor',
@@ -98,6 +120,20 @@ export function primaryMonitor(current: Mode = mode(1920, 1080, 240)): Monitor {
     scaling: current.width === native.width ? 'identity' : 'stretched',
     modes,
     presets: presets(native, current.refresh.numerator, modes),
+  };
+}
+
+/**
+ * The monitor after a change the core read back: its current mode and scaling, and the presets
+ * again at the new refresh rate, as the core rebuilds them.
+ */
+export function monitorOn(monitor: Monitor, current: Mode, scaling: Scaling): Monitor {
+  const native = monitor.native ?? current;
+  return {
+    ...monitor,
+    current,
+    scaling,
+    presets: presets(native, current.refresh.numerator, monitor.modes),
   };
 }
 
@@ -181,6 +217,21 @@ export function stretchedChange(): ActiveChange {
     profileId: null,
     source: 'window',
     sinceMs: FIXTURE_TIME_MS,
+  };
+}
+
+/** The change waiting for Keep or Revert in the pending-confirm scenario. */
+export function pendingStretchedChange(): PendingChange {
+  return {
+    changeId: 'mock-change-1',
+    monitor: PRIMARY_ID,
+    monitorName: 'Primary monitor',
+    from: mode(1920, 1080, 240),
+    to: mode(1280, 960, 240),
+    scaling: 'stretched',
+    countdownSecs: 10,
+    secondsLeft: 10,
+    source: 'window',
   };
 }
 

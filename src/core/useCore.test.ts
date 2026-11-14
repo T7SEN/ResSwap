@@ -4,8 +4,9 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { baseState, mode, PRIMARY_ID } from './mock/fixtures';
 import type { AppState } from './types/AppState';
+import type { ModeReverted } from './types/ModeReverted';
 import type { PendingChange } from './types/PendingChange';
-import { useCore, useCountdown } from './useCore';
+import { useCore, useCountdown, useLastReverted } from './useCore';
 
 function stateAt(revision: number, pending: PendingChange | null = null): AppState {
   return { ...baseState(), revision, pending };
@@ -197,5 +198,30 @@ describe('useCountdown', () => {
     });
     await act(() => emit('state-changed', stateAt(2)));
     expect(result.current).toBeNull();
+  });
+});
+
+describe('useLastReverted', () => {
+  test('REQ-SAFE-03 it holds the newest mode-reverted payload, whatever change it names', async () => {
+    coreAnswering(() => stateAt(1));
+    const { result, rerender } = renderHook(() => useLastReverted());
+    await settle();
+    expect(result.current).toBeNull();
+
+    const reverted: ModeReverted = {
+      changeId: 'change-7',
+      monitor: PRIMARY_ID,
+      monitorName: 'Primary monitor',
+      reason: 'keepWindowClosed',
+      restored: mode(1920, 1080, 240),
+      steps: [{ step: 'restore', status: 'done' }],
+    };
+    await act(() => emit('mode-reverted', reverted));
+    expect(result.current).toEqual(reverted);
+
+    // getSnapshot hands back the same object while nothing changes.
+    const held = result.current;
+    rerender();
+    expect(result.current).toBe(held);
   });
 });

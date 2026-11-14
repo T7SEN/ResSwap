@@ -4,6 +4,7 @@ import { toIpcError } from './errors';
 import { onCoreEvent, type UnlistenFn } from './events';
 import type { AppState } from './types/AppState';
 import type { IpcError } from './types/IpcError';
+import type { ModeReverted } from './types/ModeReverted';
 
 /** What the window knows about the core: loading, then the newest snapshot, or why it failed. */
 export type CoreSnapshot =
@@ -23,8 +24,10 @@ const READY_MARK = 'ResSwap:ready';
 // so each value below is replaced, never edited.
 let snapshot: CoreSnapshot = LOADING;
 let countdown: Countdown = null;
+let lastReverted: ModeReverted | null = null;
 const coreListeners = new Set<() => void>();
 const countdownListeners = new Set<() => void>();
+const revertListeners = new Set<() => void>();
 let isStarted = false;
 // A reset starts a new generation; work still running for an older one changes nothing.
 let generation = 0;
@@ -99,9 +102,14 @@ async function start(runFor: number): Promise<void> {
         }
       }),
       onCoreEvent('mode-reverted', (reverted) => {
-        if (isCurrent() && reverted.changeId === countdown?.changeId) {
+        if (!isCurrent()) {
+          return;
+        }
+        if (reverted.changeId === countdown?.changeId) {
           setCountdown(null);
         }
+        lastReverted = reverted;
+        notify(revertListeners);
       }),
     ]);
     if (!isCurrent()) {
@@ -149,12 +157,24 @@ function subscribeCountdown(listener: () => void): () => void {
   };
 }
 
+function subscribeReverted(listener: () => void): () => void {
+  revertListeners.add(listener);
+  ensureStarted();
+  return () => {
+    revertListeners.delete(listener);
+  };
+}
+
 function readSnapshot(): CoreSnapshot {
   return snapshot;
 }
 
 function readCountdown(): Countdown {
   return countdown;
+}
+
+function readLastReverted(): ModeReverted | null {
+  return lastReverted;
 }
 
 /** The core's state as this window last received it. The core owns it; never edit it. */
@@ -168,6 +188,14 @@ export function useCore(): CoreSnapshot {
  */
 export function useCountdown(): Countdown {
   return useSyncExternalStore(subscribeCountdown, readCountdown);
+}
+
+/**
+ * The newest mode-reverted payload this window received, whatever change it names, or null. A
+ * third store, so a screen can show what the core put back without reading it twice.
+ */
+export function useLastReverted(): ModeReverted | null {
+  return useSyncExternalStore(subscribeReverted, readLastReverted);
 }
 
 // @tauri-apps/api 2.12.4 types the unsubscribe function as returning nothing, but it returns a
@@ -193,9 +221,11 @@ export function resetCoreStoreForTests(): void {
   isStarted = false;
   snapshot = LOADING;
   countdown = null;
+  lastReverted = null;
   performance.clearMarks(READY_MARK);
   coreListeners.clear();
   countdownListeners.clear();
+  revertListeners.clear();
   const subscriptions = unlistenAll;
   unlistenAll = [];
   subscriptions.forEach(stopQuietly);

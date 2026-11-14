@@ -6,6 +6,8 @@ import {
   baseState,
   FIXTURE_TIME_MS,
   mode,
+  pendingStretchedChange,
+  PRIMARY_ID,
   primaryMonitor,
   stillChangedItems,
   stretchedChange,
@@ -19,10 +21,15 @@ export type Scenario = {
   state: AppState;
 };
 
+/** The commands whose outcome carries a warnings list, so the only ones warn= can name. */
+export type WarningCommand = 'apply_mode' | 'confirm_mode';
+
 /** What the URL asks the mocked core to do besides its starting state. */
 export type Faults = {
   /** fail=<command>:<CODE>: that command returns that error on every call; its first entry wins. */
   fail: ReadonlyMap<CommandName, ErrorCode>;
+  /** warn=<command>:<CODE>: that command succeeds with these errors in `warnings`, in URL order. */
+  warn: ReadonlyMap<WarningCommand, readonly ErrorCode[]>;
   /** raise=<CODE>: error-raised fires once after the window first reads the state. */
   raise: readonly ErrorCode[];
 };
@@ -57,6 +64,31 @@ const SCENARIOS: Readonly<Record<string, () => AppState>> = {
       profiles: twoProfiles(),
       monitors: [primaryMonitor(mode(1280, 960, 240)), ...state.monitors.slice(1)],
       active: [stretchedChange()],
+    };
+  },
+  'pending-confirm': () => {
+    const state = baseState();
+    const pending = pendingStretchedChange();
+    return {
+      ...state,
+      profiles: twoProfiles(),
+      monitors: [primaryMonitor(pending.to), ...state.monitors.slice(1)],
+      pending,
+    };
+  },
+  // The three preset sizes listed at 240 Hz except 16:10, with 4:3 kept once already, so one
+  // screen shows a confirmed preset, an unconfirmed one and one that is not offered.
+  'presets-offered': () => {
+    const state = baseState();
+    const kept = mode(1440, 1080, 240);
+    return {
+      ...state,
+      profiles: twoProfiles(),
+      monitors: [
+        primaryMonitor(mode(1920, 1080, 240), [kept, mode(1350, 1080, 240)]),
+        ...state.monitors.slice(1),
+      ],
+      settings: { ...state.settings, confirmedModes: [{ monitor: PRIMARY_ID, mode: kept }] },
     };
   },
   'hidden-monitors': () => {
@@ -133,9 +165,16 @@ export function readParams(params: URLSearchParams): MockParams {
     }
   }
 
-  // No command of this build succeeds with a warnings list, so a warning has nowhere to go.
+  const warn = new Map<WarningCommand, ErrorCode[]>();
   for (const value of params.getAll('warn')) {
-    problems.push(`Cannot use warn=${value}: no command in this build returns warnings.`);
+    const [command = '', code = ''] = value.split(':');
+    if ((command === 'apply_mode' || command === 'confirm_mode') && isErrorCode(code)) {
+      warn.set(command, [...(warn.get(command) ?? []), code]);
+    } else {
+      problems.push(
+        `Cannot use warn=${value}. The form is warn=<command>:<CODE>, and only apply_mode and confirm_mode return warnings.`,
+      );
+    }
   }
 
   const raise: ErrorCode[] = [];
@@ -147,5 +186,5 @@ export function readParams(params: URLSearchParams): MockParams {
     }
   }
 
-  return { label, scenario, faults: { fail, raise }, problems };
+  return { label, scenario, faults: { fail, warn, raise }, problems };
 }
